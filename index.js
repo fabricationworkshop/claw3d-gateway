@@ -48,7 +48,6 @@ const server = http.createServer(app);
 
 const wss = new WebSocketServer({
   server,
-  path: '/api/gateway/ws',
 });
 
 // ---------------------------------------------------------------------------
