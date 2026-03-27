@@ -46,8 +46,13 @@ app.get('/health', (req, res) => {
 // ---------------------------------------------------------------------------
 const server = http.createServer(app);
 
-const wss = new WebSocketServer({
-  server,
+const wss = new WebSocketServer({ noServer: true });
+
+server.on('upgrade', (request, socket, head) => {
+  console.log(`[ws] Upgrade request from ${request.headers.host} path=${request.url}`);
+  wss.handleUpgrade(request, socket, head, (ws) => {
+    wss.emit('connection', ws, request);
+  });
 });
 
 // ---------------------------------------------------------------------------
