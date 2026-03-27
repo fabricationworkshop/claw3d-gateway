@@ -11,7 +11,7 @@ const standup = require('./standup');
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
-const PORT = 18789;
+const PORT = process.env.PORT || 18789;
 const HEARTBEAT_INTERVAL_MS = 10000;
 const POLL_INTERVAL_MS = 2000;
 
