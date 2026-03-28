@@ -48,6 +48,28 @@ async function main() {
   const ctx = browser.defaultBrowserContext();
   await ctx.overridePermissions("https://topia.io", ["microphone", "camera"]);
 
+  // Spoof WebGL renderer to bypass Topia's GPU check
+  await page.evaluateOnNewDocument(() => {
+    const origGetParam = WebGLRenderingContext.prototype.getParameter;
+    WebGLRenderingContext.prototype.getParameter = function(param) {
+      if (param === 0x1F00) return "Google Inc. (NVIDIA)"; // VENDOR
+      if (param === 0x1F01) return "ANGLE (NVIDIA, NVIDIA GeForce GTX 1080 Direct3D11 vs_5_0 ps_5_0, D3D11)"; // RENDERER
+      if (param === 37445) return "Google Inc. (NVIDIA)"; // UNMASKED_VENDOR
+      if (param === 37446) return "ANGLE (NVIDIA, NVIDIA GeForce GTX 1080 Direct3D11 vs_5_0 ps_5_0, D3D11)"; // UNMASKED_RENDERER
+      return origGetParam.call(this, param);
+    };
+    if (typeof WebGL2RenderingContext !== 'undefined') {
+      const origGetParam2 = WebGL2RenderingContext.prototype.getParameter;
+      WebGL2RenderingContext.prototype.getParameter = function(param) {
+        if (param === 0x1F00) return "Google Inc. (NVIDIA)";
+        if (param === 0x1F01) return "ANGLE (NVIDIA, NVIDIA GeForce GTX 1080 Direct3D11 vs_5_0 ps_5_0, D3D11)";
+        if (param === 37445) return "Google Inc. (NVIDIA)";
+        if (param === 37446) return "ANGLE (NVIDIA, NVIDIA GeForce GTX 1080 Direct3D11 vs_5_0 ps_5_0, D3D11)";
+        return origGetParam2.call(this, param);
+      };
+    }
+  });
+
   console.log("Navigating to Topia...");
   botStatus = "loading";
   await page.goto(WORLD_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
