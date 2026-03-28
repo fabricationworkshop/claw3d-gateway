@@ -1,5 +1,6 @@
 FROM node:20-bookworm
 
+# Cache bust: v2
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install Chromium and deps
