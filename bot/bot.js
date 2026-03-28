@@ -17,7 +17,7 @@ http.createServer((req, res) => {
   }
   res.writeHead(200, {"Content-Type": "application/json"});
   res.end(JSON.stringify({agent: AGENT_NAME, status: botStatus, uptime: process.uptime()}));
-}).listen(7860, () => console.log("Health server on :7860")).on('error', (e) => {
+}).listen(process.env.PORT || 7860, () => console.log("Health server on :7860")).on('error', (e) => {
   if (e.code === 'EADDRINUSE') console.log("Port 7860 already in use, skipping health server");
   else throw e;
 });
