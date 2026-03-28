@@ -49,6 +49,15 @@ function getAgentsList() {
       avatar: null,
       avatarUrl: null,
     },
+    // Extra fields for our mission control frontend
+    status: a.status || 'active',
+    location: a.location || 'command-center',
+    room: a.location || 'command-center',
+    speech: a.speech || '',
+    task: a.task || '',
+    currentTask: a.task || '',
+    color: a.color || '#888888',
+    role: a.role || 'Agent',
   }));
 
   return {

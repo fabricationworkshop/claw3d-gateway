@@ -7,6 +7,7 @@ const fs = require('fs');
 const { getAgentsList, getStatus, readAgentLog, AGENT_LOG_PATH } = require('./agents');
 const { getSessionPreviews, getSessionsList } = require('./sessions');
 const standup = require('./standup');
+const opsSync = require('./ops-sync');
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -392,4 +393,7 @@ server.listen(PORT, () => {
   console.log(`  Standup:   http://localhost:${PORT}/api/office/standup/meeting`);
   console.log(`  Health:    http://localhost:${PORT}/health`);
   console.log('='.repeat(60));
+
+  // Start ops DB sync (writes agent activity to Supabase)
+  opsSync.startWatching();
 });
