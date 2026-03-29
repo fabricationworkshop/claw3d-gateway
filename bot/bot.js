@@ -126,48 +126,12 @@ async function cleanup() {
   } catch {}
 }
 
-// Kill stale Browserless sessions on startup to prevent ghost duplicates
-async function killStaleSessions() {
-  if (!BROWSERLESS_TOKEN) return;
-  try {
-    // Try both v1 and v2 Browserless API endpoints
-    let sessions = [];
-    for (const url of [
-      `https://chrome.browserless.io/sessions?token=${BROWSERLESS_TOKEN}`,
-      `https://production-sfo.browserless.io/sessions?token=${BROWSERLESS_TOKEN}`,
-    ]) {
-      try {
-        const res = await fetch(url);
-        const text = await res.text();
-        if (text.startsWith("[") || text.startsWith("{")) {
-          const data = JSON.parse(text);
-          if (Array.isArray(data)) sessions = data;
-          break;
-        }
-      } catch {}
-    }
-    if (sessions.length === 0) {
-      console.log(`[${AGENT_NAME}] No stale sessions found`);
-      return;
-    }
-    console.log(`[${AGENT_NAME}] Killing ${sessions.length} stale session(s)...`);
-    for (const s of sessions) {
-      const id = s.id || s.browserId;
-      if (id) {
-        await fetch(`https://chrome.browserless.io/sessions/${id}?token=${BROWSERLESS_TOKEN}`, { method: "DELETE" }).catch(() => {});
-      }
-    }
-    // Wait for sessions to fully close
-    await new Promise(r => setTimeout(r, 3000));
-    console.log(`[${AGENT_NAME}] Stale sessions cleared`);
-  } catch (e) {
-    console.log(`[${AGENT_NAME}] Session cleanup error:`, e.message);
-  }
-}
+// NOTE: No longer killing ALL sessions — that caused a cascade where
+// each bot killed the others' sessions. Each bot only cleans up its OWN
+// browser connection via cleanup() above.
 
 async function enterWorld() {
   await cleanup();
-  await killStaleSessions();
 
   console.log(`=== ${AGENT_NAME} connecting ===`);
   botStatus = "connecting";
@@ -186,7 +150,16 @@ async function enterWorld() {
     isResponding = true;
     try {
       const text = await transcribe(audioB64);
-      if (!text || text.trim().length < 3) return;
+      if (!text || text.trim().length < 3) {
+        console.log(`[${AGENT_NAME}] Transcription empty or too short: "${text || ""}"`);
+        return;
+      }
+      // Filter common Whisper hallucinations on silence/noise
+      const hallucinations = ["thank you", "thanks for watching", "subscribe", "bye", "you", "the end", "...", "music"];
+      if (hallucinations.some(h => text.trim().toLowerCase() === h)) {
+        console.log(`[${AGENT_NAME}] Filtered hallucination: "${text}"`);
+        return;
+      }
       console.log(`[${AGENT_NAME}] Heard: "${text}"`);
       const reply = await getResponse(text, conversationHistory);
       console.log(`[${AGENT_NAME}] Replying: "${reply}"`);
@@ -300,9 +273,17 @@ async function enterWorld() {
           if (e.data.size > 0) chunks.push(e.data);
         };
 
+        let recordStart = 0;
+        recorder.onstart = () => { recordStart = Date.now(); };
         recorder.onstop = async () => {
+          const duration = Date.now() - recordStart;
           const blob = new Blob(chunks.splice(0), { type: "audio/webm" });
-          if (blob.size < 2000) return; // ignore noise blips
+          // Ignore very short recordings (<0.5s) or tiny files — likely noise
+          if (blob.size < 5000 || duration < 500) {
+            console.log("[BOT] Ignoring short audio:", duration + "ms", blob.size + "b");
+            return;
+          }
+          console.log("[BOT] Recording:", duration + "ms", blob.size + "b");
           const arr = new Uint8Array(await blob.arrayBuffer());
           // chunk-encode to avoid stack overflow on large buffers
           let b64 = "";
@@ -317,7 +298,7 @@ async function enterWorld() {
           analyser.getByteFrequencyData(freqData);
           const rms = Math.sqrt(freqData.reduce((s, v) => s + v * v, 0) / freqData.length);
 
-          if (rms > 10) {
+          if (rms > 20) { // higher threshold to filter ambient noise
             if (!active) {
               active = true;
               try { recorder.start(); } catch {}
@@ -378,49 +359,68 @@ async function enterWorld() {
   }
 
   if (changeAvatarClicked) {
-    // Wait for avatar picker images to fully load (they're lazy)
     const targetIndex = AVATAR_INDEX[AGENT_NAME] ?? 2;
-    let avatarSelected = null;
 
-    for (let attempt = 0; attempt < 8; attempt++) {
-      await new Promise(r => setTimeout(r, 2000));
-
-      avatarSelected = await page.evaluate((keyword, fallbackIdx) => {
-        const imgs = [...document.querySelectorAll("img")].filter(i => i.offsetParent && i.width > 50);
-
-        // Debug: log what's available
-        const alts = imgs.map(i => i.alt).filter(Boolean);
-        console.log("[BOT] Avatar picker images:", JSON.stringify(alts));
-
-        // Strategy 1: match by alt text keyword
-        const match = imgs.find(img => img.alt && img.alt.includes(keyword));
-        if (match) {
-          const target = match.closest("div[class]") || match;
-          target.click();
-          return { method: "alt", alt: match.alt };
-        }
-
-        // Strategy 2: click by grid index (excluding non-avatar images like banners)
-        const avatarImgs = imgs.filter(i => i.alt && i.alt.includes("Topi") || i.alt.includes("Avatar"));
-        if (avatarImgs.length > fallbackIdx) {
-          const target = avatarImgs[fallbackIdx].closest("div[class]") || avatarImgs[fallbackIdx];
-          target.click();
-          return { method: "index", alt: avatarImgs[fallbackIdx].alt, idx: fallbackIdx };
-        }
-
-        return null;
-      }, avatarKeyword, targetIndex);
-
-      if (avatarSelected) break;
-      console.log(`[${AGENT_NAME}] Avatar picker loading... attempt ${attempt + 1}`);
+    // Wait for "Avatar selection" heading to appear (confirms picker is open)
+    try {
+      await page.waitForFunction(() => {
+        return [...document.querySelectorAll("h4, h3, h2, p")].some(
+          el => el.textContent.includes("Avatar selection")
+        );
+      }, { timeout: 10000 });
+      console.log(`[${AGENT_NAME}] Avatar picker is open`);
+    } catch {
+      console.log(`[${AGENT_NAME}] Avatar picker didn't open`);
     }
+
+    // Wait for avatar images to load (at least 5 images with alt text)
+    try {
+      await page.waitForFunction(() => {
+        const imgs = [...document.querySelectorAll("img")].filter(
+          i => i.offsetParent && i.width > 80 && i.alt && (i.alt.includes("Topi") || i.alt.includes("Avatar"))
+        );
+        return imgs.length >= 5;
+      }, { timeout: 15000 });
+      console.log(`[${AGENT_NAME}] Avatar images loaded`);
+    } catch {
+      console.log(`[${AGENT_NAME}] Timed out waiting for avatar images`);
+    }
+
+    await new Promise(r => setTimeout(r, 1000));
+
+    // Click the right avatar
+    const avatarSelected = await page.evaluate((keyword, fallbackIdx) => {
+      const imgs = [...document.querySelectorAll("img")].filter(
+        i => i.offsetParent && i.width > 50
+      );
+      const alts = imgs.map(i => i.alt).filter(Boolean);
+      console.log("[BOT] Available avatars:", JSON.stringify(alts));
+
+      // Strategy 1: alt text match
+      const match = imgs.find(img => img.alt && img.alt.includes(keyword));
+      if (match) {
+        const target = match.closest("div[class]") || match;
+        target.click();
+        return { method: "alt", alt: match.alt };
+      }
+
+      // Strategy 2: index into avatar-only images
+      const avatarImgs = imgs.filter(i => i.alt && (i.alt.includes("Topi") || i.alt.includes("Avatar")));
+      if (avatarImgs.length > fallbackIdx) {
+        const target = avatarImgs[fallbackIdx].closest("div[class]") || avatarImgs[fallbackIdx];
+        target.click();
+        return { method: "index", alt: avatarImgs[fallbackIdx].alt, idx: fallbackIdx };
+      }
+
+      return null;
+    }, avatarKeyword, targetIndex);
 
     if (avatarSelected) {
       console.log(`[${AGENT_NAME}] Avatar selected via ${avatarSelected.method}: "${avatarSelected.alt}"`);
       await new Promise(r => setTimeout(r, 1500));
 
-      // Click "Save Changes"
-      for (let i = 0; i < 3; i++) {
+      // Click "Save Changes" with retries
+      for (let i = 0; i < 5; i++) {
         const saved = await page.evaluate(() => {
           const btn = [...document.querySelectorAll("button")]
             .find(b => b.textContent.trim() === "Save Changes" && b.offsetParent);
@@ -431,7 +431,7 @@ async function enterWorld() {
         await new Promise(r => setTimeout(r, 1000));
       }
     } else {
-      console.log(`[${AGENT_NAME}] Avatar selection failed after all attempts`);
+      console.log(`[${AGENT_NAME}] Avatar selection FAILED — no matching image found`);
       await page.evaluate(() => {
         const btn = [...document.querySelectorAll("button")]
           .find(b => b.textContent.trim() === "Cancel" && b.offsetParent);
