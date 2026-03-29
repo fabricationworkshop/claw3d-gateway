@@ -41,7 +41,8 @@ const GREETINGS = {
 const PERSONALITY = PERSONALITIES[AGENT_NAME] || PERSONALITIES.Adam;
 const GREETING = GREETINGS[AGENT_NAME] || GREETINGS.Adam;
 
-// ── Avatar alt-text mapping (from Topia's "Avatar selection" picker) ──────────
+// ── Avatar mapping (from Topia's "Avatar selection" picker) ──────────────────
+// Alt text match + index fallback (grid order: Butterfly=0, Default=1, Original=2, Astronaut=3, Dinosaur=4, Fox=5, Pumpkin=6)
 const AVATAR_KEYWORD = {
   Adam: "Original",
   Bowie: "Astronaut",
@@ -49,6 +50,14 @@ const AVATAR_KEYWORD = {
   Tonya: "Pumpkin",
   Rex: "Dinosaur",
   Jeanie: "Butterfly",
+};
+const AVATAR_INDEX = {
+  Adam: 2,
+  Bowie: 3,
+  Cobalt: 5,
+  Tonya: 6,
+  Rex: 4,
+  Jeanie: 0,
 };
 
 // ── Exact spawn coordinates from Topia world builder ─────────────────────────
@@ -338,37 +347,60 @@ async function enterWorld() {
   }
 
   if (changeAvatarClicked) {
-    await new Promise(r => setTimeout(r, 2000));
+    // Wait for avatar picker images to fully load (they're lazy)
+    const targetIndex = AVATAR_INDEX[AGENT_NAME] ?? 2;
+    let avatarSelected = null;
 
-    // Step 2: Click the img with alt text containing our keyword
-    const avatarSelected = await page.evaluate((keyword) => {
-      const imgs = [...document.querySelectorAll("img")];
-      const match = imgs.find(img => img.alt && img.alt.includes(keyword) && img.offsetParent);
-      if (match) {
-        // Click the parent container (the clickable wrapper)
-        const clickTarget = match.closest("div[class]") || match;
-        clickTarget.click();
-        return match.alt;
-      }
-      return null;
-    }, avatarKeyword);
+    for (let attempt = 0; attempt < 8; attempt++) {
+      await new Promise(r => setTimeout(r, 2000));
+
+      avatarSelected = await page.evaluate((keyword, fallbackIdx) => {
+        const imgs = [...document.querySelectorAll("img")].filter(i => i.offsetParent && i.width > 50);
+
+        // Debug: log what's available
+        const alts = imgs.map(i => i.alt).filter(Boolean);
+        console.log("[BOT] Avatar picker images:", JSON.stringify(alts));
+
+        // Strategy 1: match by alt text keyword
+        const match = imgs.find(img => img.alt && img.alt.includes(keyword));
+        if (match) {
+          const target = match.closest("div[class]") || match;
+          target.click();
+          return { method: "alt", alt: match.alt };
+        }
+
+        // Strategy 2: click by grid index (excluding non-avatar images like banners)
+        const avatarImgs = imgs.filter(i => i.alt && i.alt.includes("Topi") || i.alt.includes("Avatar"));
+        if (avatarImgs.length > fallbackIdx) {
+          const target = avatarImgs[fallbackIdx].closest("div[class]") || avatarImgs[fallbackIdx];
+          target.click();
+          return { method: "index", alt: avatarImgs[fallbackIdx].alt, idx: fallbackIdx };
+        }
+
+        return null;
+      }, avatarKeyword, targetIndex);
+
+      if (avatarSelected) break;
+      console.log(`[${AGENT_NAME}] Avatar picker loading... attempt ${attempt + 1}`);
+    }
 
     if (avatarSelected) {
-      console.log(`[${AGENT_NAME}] Avatar clicked: "${avatarSelected}"`);
-      await new Promise(r => setTimeout(r, 1000));
+      console.log(`[${AGENT_NAME}] Avatar selected via ${avatarSelected.method}: "${avatarSelected.alt}"`);
+      await new Promise(r => setTimeout(r, 1500));
 
-      // Step 3: Click "Save Changes"
-      const saved = await page.evaluate(() => {
-        const btn = [...document.querySelectorAll("button")]
-          .find(b => b.textContent.trim() === "Save Changes" && b.offsetParent);
-        if (btn) { btn.click(); return true; }
-        return false;
-      });
-      if (saved) console.log(`[${AGENT_NAME}] Avatar saved!`);
-      else console.log(`[${AGENT_NAME}] Save Changes button not found`);
+      // Click "Save Changes"
+      for (let i = 0; i < 3; i++) {
+        const saved = await page.evaluate(() => {
+          const btn = [...document.querySelectorAll("button")]
+            .find(b => b.textContent.trim() === "Save Changes" && b.offsetParent);
+          if (btn) { btn.click(); return true; }
+          return false;
+        });
+        if (saved) { console.log(`[${AGENT_NAME}] Avatar saved!`); break; }
+        await new Promise(r => setTimeout(r, 1000));
+      }
     } else {
-      console.log(`[${AGENT_NAME}] Avatar "${avatarKeyword}" not found in picker`);
-      // Cancel and proceed with default
+      console.log(`[${AGENT_NAME}] Avatar selection failed after all attempts`);
       await page.evaluate(() => {
         const btn = [...document.querySelectorAll("button")]
           .find(b => b.textContent.trim() === "Cancel" && b.offsetParent);
