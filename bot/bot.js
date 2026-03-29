@@ -685,20 +685,25 @@ function startWandering() {
   console.log(`[${AGENT_NAME}] Box-step wandering started`);
 }
 
+let reconnectAttempts = 0;
 function scheduleReconnect() {
   if (isReconnecting) return;
   isReconnecting = true;
-  console.log(`[${AGENT_NAME}] Reconnecting in 15s...`);
+  reconnectAttempts++;
+  // Exponential backoff: 30s, 60s, 120s, max 5min
+  const delay = Math.min(30000 * Math.pow(2, reconnectAttempts - 1), 300000);
+  console.log(`[${AGENT_NAME}] Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempts})...`);
   setTimeout(async () => {
     try {
       await enterWorld();
       isReconnecting = false;
+      reconnectAttempts = 0; // reset on success
     } catch (e) {
       console.error(`[${AGENT_NAME}] Reconnect failed:`, e.message);
       isReconnecting = false;
       scheduleReconnect();
     }
-  }, 15000);
+  }, delay);
 }
 
 async function transcribe(audioB64) {
@@ -805,9 +810,15 @@ setInterval(() => {
   }
 }, 30000);
 
-// Start
-enterWorld().catch(e => {
-  console.error(`[${AGENT_NAME}] Fatal:`, e.message);
-  botStatus = "crashed: " + e.message;
-  scheduleReconnect();
-});
+// Stagger startup so 6 bots don't all hit Browserless at once
+const STAGGER = { Adam: 0, Bowie: 15, Cobalt: 30, Tonya: 45, Rex: 60, Jeanie: 75 };
+const startDelay = (STAGGER[AGENT_NAME] || 0) * 1000;
+console.log(`[${AGENT_NAME}] Starting in ${startDelay / 1000}s...`);
+
+setTimeout(() => {
+  enterWorld().catch(e => {
+    console.error(`[${AGENT_NAME}] Fatal:`, e.message);
+    botStatus = "crashed: " + e.message;
+    scheduleReconnect();
+  });
+}, startDelay);
