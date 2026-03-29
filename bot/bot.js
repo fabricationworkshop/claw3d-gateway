@@ -626,9 +626,9 @@ function startWandering() {
           }
         }
       } else {
-        // Walk out 1-3 steps in a random direction
+        // Walk out exactly 1 step in a random direction
         const dir = DIRECTIONS[Math.floor(Math.random() * 4)];
-        const steps = 1 + Math.floor(Math.random() * 3);
+        const steps = 1;
         for (let i = 0; i < steps && !isResponding; i++) {
           await page.keyboard.press(dir);
           await new Promise(r => setTimeout(r, 300));
@@ -642,9 +642,9 @@ function startWandering() {
     isMoving = false;
   }
 
-  // Every 3-6 seconds
+  // Every 4-8 seconds — just a subtle fidget
   function scheduleNext() {
-    const delay = 3000 + Math.floor(Math.random() * 3000);
+    const delay = 4000 + Math.floor(Math.random() * 4000);
     setTimeout(async () => {
       await wander();
       if (botStatus === "in-world") scheduleNext();
