@@ -93,6 +93,21 @@ async function main() {
   }
 
   botStatus = "entering";
+  lastScreenshot = await page.screenshot();
+
+  // Log what's on screen
+  const pageText = await page.evaluate(() => document.body?.innerText?.substring(0, 1000) || "empty");
+  console.log("Page before fill:", pageText.substring(0, 300));
+
+  // Dismiss any overlays/popups
+  await page.evaluate(() => {
+    // Click away any overlays
+    document.querySelectorAll('[class*="overlay"], [class*="modal"], [class*="popup"], [class*="cookie"]').forEach(el => {
+      const close = el.querySelector('button, [class*="close"]');
+      if (close) close.click();
+    });
+  });
+
   await new Promise(r => setTimeout(r, 1000));
 
   // Fill form using page.evaluate for reliability in headless
@@ -155,5 +170,6 @@ async function main() {
 
 main().catch(e => {
   console.error("Fatal:", e.message);
+  console.error("Stack:", e.stack);
   botStatus = "crashed: " + e.message;
 });
