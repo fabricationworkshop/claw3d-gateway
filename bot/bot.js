@@ -554,9 +554,11 @@ async function teleportToSpawn() {
   }
 }
 
-// Very gentle wandering — 1 step every 30-60s, freezes when speaking
+// Box-step wandering — walk 1-3 steps out, then back toward spawn every few seconds
 function startWandering() {
   const DIRECTIONS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+  const OPPOSITE = { ArrowUp: "ArrowDown", ArrowDown: "ArrowUp", ArrowLeft: "ArrowRight", ArrowRight: "ArrowLeft" };
+  const pendingReturn = []; // track steps taken to reverse them
 
   async function wander() {
     if (!page || botStatus !== "in-world") return;
@@ -564,10 +566,29 @@ function startWandering() {
 
     isMoving = true;
     try {
-      // Just 1 step in a random direction — very slight
-      const dir = DIRECTIONS[Math.floor(Math.random() * 4)];
-      if (!isResponding) {
-        await page.keyboard.press(dir);
+      if (pendingReturn.length > 0) {
+        // Return toward spawn — reverse previous steps
+        const returnStep = pendingReturn.pop();
+        if (!isResponding) {
+          await page.keyboard.press(returnStep.dir);
+          await new Promise(r => setTimeout(r, 300));
+          if (returnStep.steps > 1) {
+            for (let i = 1; i < returnStep.steps && !isResponding; i++) {
+              await page.keyboard.press(returnStep.dir);
+              await new Promise(r => setTimeout(r, 300));
+            }
+          }
+        }
+      } else {
+        // Walk out 1-3 steps in a random direction
+        const dir = DIRECTIONS[Math.floor(Math.random() * 4)];
+        const steps = 1 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < steps && !isResponding; i++) {
+          await page.keyboard.press(dir);
+          await new Promise(r => setTimeout(r, 300));
+        }
+        // Queue the return trip
+        pendingReturn.push({ dir: OPPOSITE[dir], steps });
       }
     } catch (e) {
       console.log(`[${AGENT_NAME}] Wander error:`, e.message);
@@ -575,16 +596,16 @@ function startWandering() {
     isMoving = false;
   }
 
-  // Wander every 30-60 seconds — very gentle
+  // Every 3-6 seconds
   function scheduleNext() {
-    const delay = 30000 + Math.floor(Math.random() * 30000);
+    const delay = 3000 + Math.floor(Math.random() * 3000);
     setTimeout(async () => {
       await wander();
       if (botStatus === "in-world") scheduleNext();
     }, delay);
   }
   scheduleNext();
-  console.log(`[${AGENT_NAME}] Gentle wandering started`);
+  console.log(`[${AGENT_NAME}] Box-step wandering started`);
 }
 
 function scheduleReconnect() {
