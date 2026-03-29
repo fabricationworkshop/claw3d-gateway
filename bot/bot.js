@@ -153,21 +153,65 @@ async function enterWorld() {
   }));
   if (!state.formGone) throw new Error("Entry failed — form still visible");
 
-  // Enable mic
-  await page.evaluate(() => {
-    const btn = [...document.querySelectorAll("button")].find(b =>
-      b.textContent.toLowerCase().includes("turn on microphone"));
-    if (btn) btn.click();
-  });
+  // Enable mic — use Puppeteer click for React compat
+  try {
+    const micPrompt = await page.evaluateHandle(() =>
+      [...document.querySelectorAll("button")].find(b =>
+        b.textContent.toLowerCase().includes("turn on microphone"))
+    );
+    if (micPrompt && micPrompt.asElement()) {
+      await micPrompt.asElement().click();
+      console.log("Clicked Turn on Microphone");
+    }
+  } catch (e) { console.log("Mic prompt click:", e.message); }
   await new Promise(r => setTimeout(r, 3000));
 
-  // Unmute
-  await page.evaluate(() => {
-    const btn = [...document.querySelectorAll("button")].find(b =>
-      b.textContent.trim() === "Unmute");
-    if (btn) btn.click();
-  });
-  await new Promise(r => setTimeout(r, 2000));
+  // Unmute — try multiple approaches
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const isMuted = await page.evaluate(() => !!document.querySelector('[data-testid="micOff icon"]'));
+    if (!isMuted) { console.log("Mic is ON"); break; }
+    console.log(`Unmute attempt ${attempt + 1}...`);
+
+    try {
+      // Approach 1: Puppeteer click on Unmute button handle
+      const unmuteBtn = await page.evaluateHandle(() =>
+        [...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Unmute")
+      );
+      if (unmuteBtn && unmuteBtn.asElement()) {
+        await unmuteBtn.asElement().click();
+        console.log("Puppeteer-clicked Unmute");
+      }
+    } catch (e) { console.log("Unmute click error:", e.message); }
+
+    await new Promise(r => setTimeout(r, 2000));
+
+    // Approach 2: Click the micOff icon's parent button via coordinates
+    const stillMuted = await page.evaluate(() => !!document.querySelector('[data-testid="micOff icon"]'));
+    if (stillMuted) {
+      try {
+        const box = await page.evaluate(() => {
+          const el = document.querySelector('[data-testid="micOff icon"]');
+          if (!el) return null;
+          const btn = el.closest("button");
+          if (!btn) return null;
+          const r = btn.getBoundingClientRect();
+          return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        });
+        if (box) {
+          await page.mouse.click(box.x, box.y);
+          console.log("Coordinate-clicked micOff at", box.x, box.y);
+        }
+      } catch (e) { console.log("Coord click error:", e.message); }
+    }
+
+    await new Promise(r => setTimeout(r, 2000));
+  }
+
+  const finalMicState = await page.evaluate(() => ({
+    micOff: !!document.querySelector('[data-testid="micOff icon"]'),
+    micOn: !!document.querySelector('[data-testid="micOn icon"]'),
+  }));
+  console.log("Final mic state:", JSON.stringify(finalMicState));
 
   botStatus = "in-world";
   console.log(`${AGENT_NAME} is in the world!`);
