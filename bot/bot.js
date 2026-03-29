@@ -649,11 +649,32 @@ async function teleportToSpawn() {
   }
 }
 
-// Box-step wandering — walk 1-3 steps out, then back toward spawn every few seconds
+// Box-step wandering + emotes — walk, return to spawn, trigger animations
 function startWandering() {
   const DIRECTIONS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
   const OPPOSITE = { ArrowUp: "ArrowDown", ArrowDown: "ArrowUp", ArrowLeft: "ArrowRight", ArrowRight: "ArrowLeft" };
-  const pendingReturn = []; // track steps taken to reverse them
+  const pendingReturn = [];
+
+  // Topia emotes — try clicking reaction buttons in the UI
+  async function triggerEmote() {
+    if (!page || isResponding) return;
+    try {
+      const emoted = await page.evaluate(() => {
+        // Look for emote/reaction buttons in Topia's UI
+        const emoteButtons = [...document.querySelectorAll("button, [role='button']")].filter(b => {
+          const label = (b.getAttribute("aria-label") || b.textContent || "").toLowerCase();
+          return /wave|dance|sit|clap|heart|emote|react|celebrate|thumbs|smile|cheer/i.test(label) && b.offsetParent;
+        });
+        if (emoteButtons.length > 0) {
+          const btn = emoteButtons[Math.floor(Math.random() * emoteButtons.length)];
+          btn.click();
+          return btn.getAttribute("aria-label") || btn.textContent?.trim();
+        }
+        return null;
+      });
+      if (emoted) console.log(`[${AGENT_NAME}] Emote: ${emoted}`);
+    } catch {}
+  }
 
   async function wander() {
     if (!page || botStatus !== "in-world") return;
@@ -661,46 +682,41 @@ function startWandering() {
 
     isMoving = true;
     try {
-      if (pendingReturn.length > 0) {
-        // Return toward spawn — reverse previous steps
+      // 20% chance to trigger an emote instead of walking
+      if (Math.random() < 0.2) {
+        await triggerEmote();
+      } else if (pendingReturn.length > 0) {
         const returnStep = pendingReturn.pop();
         if (!isResponding) {
           await page.keyboard.press(returnStep.dir);
           await new Promise(r => setTimeout(r, 300));
-          if (returnStep.steps > 1) {
-            for (let i = 1; i < returnStep.steps && !isResponding; i++) {
-              await page.keyboard.press(returnStep.dir);
-              await new Promise(r => setTimeout(r, 300));
-            }
-          }
         }
       } else {
-        // Walk out exactly 1 step in a random direction
         const dir = DIRECTIONS[Math.floor(Math.random() * 4)];
-        const steps = 1;
-        for (let i = 0; i < steps && !isResponding; i++) {
+        if (!isResponding) {
           await page.keyboard.press(dir);
           await new Promise(r => setTimeout(r, 300));
         }
-        // Queue the return trip
-        pendingReturn.push({ dir: OPPOSITE[dir], steps });
+        pendingReturn.push({ dir: OPPOSITE[dir], steps: 1 });
       }
     } catch (e) {
-      console.log(`[${AGENT_NAME}] Wander error:`, e.message);
+      // Don't spam logs on session close
+      if (!e.message.includes("Session closed")) {
+        console.log(`[${AGENT_NAME}] Wander error:`, e.message);
+      }
     }
     isMoving = false;
   }
 
-  // Every 4-8 seconds — just a subtle fidget
   function scheduleNext() {
     const delay = 4000 + Math.floor(Math.random() * 4000);
     setTimeout(async () => {
-      await wander();
+      if (page && botStatus === "in-world") await wander();
       if (botStatus === "in-world") scheduleNext();
     }, delay);
   }
   scheduleNext();
-  console.log(`[${AGENT_NAME}] Box-step wandering started`);
+  console.log(`[${AGENT_NAME}] Wandering + emotes started`);
 }
 
 let reconnectAttempts = 0;
