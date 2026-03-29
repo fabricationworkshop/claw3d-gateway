@@ -86,14 +86,28 @@ async function cleanup() {
   } catch {}
 }
 
-// Kill ALL stale Browserless sessions on startup to prevent ghost duplicates
+// Kill stale Browserless sessions on startup to prevent ghost duplicates
 async function killStaleSessions() {
   if (!BROWSERLESS_TOKEN) return;
   try {
-    const res = await fetch(`https://chrome.browserless.io/sessions?token=${BROWSERLESS_TOKEN}`);
-    const sessions = await res.json();
-    if (!Array.isArray(sessions) || sessions.length === 0) {
-      console.log(`[${AGENT_NAME}] No stale sessions`);
+    // Try both v1 and v2 Browserless API endpoints
+    let sessions = [];
+    for (const url of [
+      `https://chrome.browserless.io/sessions?token=${BROWSERLESS_TOKEN}`,
+      `https://production-sfo.browserless.io/sessions?token=${BROWSERLESS_TOKEN}`,
+    ]) {
+      try {
+        const res = await fetch(url);
+        const text = await res.text();
+        if (text.startsWith("[") || text.startsWith("{")) {
+          const data = JSON.parse(text);
+          if (Array.isArray(data)) sessions = data;
+          break;
+        }
+      } catch {}
+    }
+    if (sessions.length === 0) {
+      console.log(`[${AGENT_NAME}] No stale sessions found`);
       return;
     }
     console.log(`[${AGENT_NAME}] Killing ${sessions.length} stale session(s)...`);
