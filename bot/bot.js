@@ -20,11 +20,24 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({agent: AGENT_NAME, status: botStatus, uptime: process.uptime()}));
 }).listen(PORT, () => console.log(`Health server on :${PORT}`));
 
+async function step(name, fn) {
+  console.log(`[STEP] ${name}...`);
+  botStatus = name;
+  try {
+    const result = await fn();
+    console.log(`[STEP] ${name} OK`);
+    return result;
+  } catch (e) {
+    console.error(`[STEP] ${name} FAILED:`, e.message);
+    throw e;
+  }
+}
+
 async function main() {
   console.log("=== Agent Bot:", AGENT_NAME, "===");
   console.log("World:", WORLD_URL);
 
-  const browser = await puppeteer.launch({
+  const browser = await step("launch-browser", () => puppeteer.launch({
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium",
     headless: "new",
     args: [
@@ -41,116 +54,99 @@ async function main() {
       "--window-size=1280,720",
     ],
     defaultViewport: { width: 1280, height: 720 },
+  }));
+
+  const page = await step("new-page", () => browser.newPage());
+
+  await step("set-permissions", async () => {
+    const ctx = browser.defaultBrowserContext();
+    await ctx.overridePermissions("https://topia.io", ["microphone", "camera"]);
   });
 
-  console.log("Browser launched");
-  const page = await browser.newPage();
-  const ctx = browser.defaultBrowserContext();
-  await ctx.overridePermissions("https://topia.io", ["microphone", "camera"]);
-
-  // Spoof WebGL renderer to bypass Topia's GPU check
-  await page.evaluateOnNewDocument(() => {
+  await step("spoof-webgl", () => page.evaluateOnNewDocument(() => {
     const origGetParam = WebGLRenderingContext.prototype.getParameter;
     WebGLRenderingContext.prototype.getParameter = function(param) {
-      if (param === 0x1F00) return "Google Inc. (NVIDIA)"; // VENDOR
-      if (param === 0x1F01) return "ANGLE (NVIDIA, NVIDIA GeForce GTX 1080 Direct3D11 vs_5_0 ps_5_0, D3D11)"; // RENDERER
-      if (param === 37445) return "Google Inc. (NVIDIA)"; // UNMASKED_VENDOR
-      if (param === 37446) return "ANGLE (NVIDIA, NVIDIA GeForce GTX 1080 Direct3D11 vs_5_0 ps_5_0, D3D11)"; // UNMASKED_RENDERER
+      if (param === 37445) return "Google Inc. (NVIDIA)";
+      if (param === 37446) return "ANGLE (NVIDIA, NVIDIA GeForce GTX 1080)";
       return origGetParam.call(this, param);
     };
     if (typeof WebGL2RenderingContext !== 'undefined') {
-      const origGetParam2 = WebGL2RenderingContext.prototype.getParameter;
+      const orig2 = WebGL2RenderingContext.prototype.getParameter;
       WebGL2RenderingContext.prototype.getParameter = function(param) {
-        if (param === 0x1F00) return "Google Inc. (NVIDIA)";
-        if (param === 0x1F01) return "ANGLE (NVIDIA, NVIDIA GeForce GTX 1080 Direct3D11 vs_5_0 ps_5_0, D3D11)";
         if (param === 37445) return "Google Inc. (NVIDIA)";
-        if (param === 37446) return "ANGLE (NVIDIA, NVIDIA GeForce GTX 1080 Direct3D11 vs_5_0 ps_5_0, D3D11)";
-        return origGetParam2.call(this, param);
+        if (param === 37446) return "ANGLE (NVIDIA, NVIDIA GeForce GTX 1080)";
+        return orig2.call(this, param);
       };
+    }
+  }));
+
+  await step("navigate", () => page.goto(WORLD_URL, { waitUntil: "domcontentloaded", timeout: 60000 }));
+
+  // Wait for any content to render
+  await step("wait-for-render", async () => {
+    for (let i = 0; i < 20; i++) {
+      const hasContent = await page.evaluate(() => {
+        return document.querySelectorAll('input').length > 0 ||
+               document.body.innerText.length > 100;
+      });
+      if (hasContent) return;
+      await new Promise(r => setTimeout(r, 2000));
+      console.log(`  waiting... ${i+1}/20`);
     }
   });
 
-  console.log("Navigating to Topia...");
-  botStatus = "loading";
-  await page.goto(WORLD_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-  console.log("DOM loaded, waiting for UI...");
+  // Screenshot to debug
+  lastScreenshot = await page.screenshot();
 
-  // Wait for React to render
-  let foundForm = false;
-  for (let i = 0; i < 30; i++) {
-    const inputs = await page.$$("input");
-    if (inputs.length > 0) { foundForm = true; break; }
-    await new Promise(r => setTimeout(r, 2000));
-    console.log(`Waiting for form... attempt ${i+1}/30`);
-  }
+  const pageInfo = await step("inspect-page", () => page.evaluate(() => ({
+    text: document.body?.innerText?.substring(0, 500),
+    inputCount: document.querySelectorAll('input').length,
+    buttonCount: document.querySelectorAll('button').length,
+    buttons: [...document.querySelectorAll('button')].map(b => b.textContent.trim()).slice(0, 10),
+    title: document.title,
+    url: window.location.href,
+  })));
+  console.log("Page info:", JSON.stringify(pageInfo, null, 2));
 
-  if (!foundForm) {
-    const text = await page.evaluate(() => document.body?.innerText?.substring(0, 500) || "empty");
-    console.log("Page content:", text);
-    lastScreenshot = await page.screenshot();
-    botStatus = "error: " + text.substring(0, 100);
+  if (pageInfo.inputCount === 0) {
+    botStatus = "error-no-inputs: " + (pageInfo.text || "").substring(0, 100);
+    console.log("No inputs found. Keeping health server alive for /screenshot debugging.");
     return;
   }
 
-  botStatus = "entering";
-  lastScreenshot = await page.screenshot();
-
-  // Log what's on screen
-  const pageText = await page.evaluate(() => document.body?.innerText?.substring(0, 1000) || "empty");
-  console.log("Page before fill:", pageText.substring(0, 300));
-
-  // Dismiss any overlays/popups
-  await page.evaluate(() => {
-    // Click away any overlays
-    document.querySelectorAll('[class*="overlay"], [class*="modal"], [class*="popup"], [class*="cookie"]').forEach(el => {
-      const close = el.querySelector('button, [class*="close"]');
-      if (close) close.click();
-    });
-  });
-
-  await new Promise(r => setTimeout(r, 1000));
-
-  // Fill form using page.evaluate for reliability in headless
-  await page.evaluate((name, password) => {
+  // Fill form entirely via evaluate
+  await step("fill-form", () => page.evaluate((name, password) => {
     const inputs = document.querySelectorAll('input');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
     if (inputs[0]) {
-      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-      nativeInputValueSetter.call(inputs[0], name);
+      setter.call(inputs[0], name);
       inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
       inputs[0].dispatchEvent(new Event('change', { bubbles: true }));
     }
     if (inputs[1] && password) {
-      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-      nativeInputValueSetter.call(inputs[1], password);
+      setter.call(inputs[1], password);
       inputs[1].dispatchEvent(new Event('input', { bubbles: true }));
       inputs[1].dispatchEvent(new Event('change', { bubbles: true }));
     }
-  }, AGENT_NAME, WORLD_PASSWORD);
-  console.log("Filled form:", AGENT_NAME);
+    return { filled: inputs.length };
+  }, AGENT_NAME, WORLD_PASSWORD));
 
   await new Promise(r => setTimeout(r, 1500));
+  lastScreenshot = await page.screenshot();
 
-  // Click Enter World using evaluate for reliability
-  await page.evaluate(() => {
-    const buttons = document.querySelectorAll('button');
-    for (const btn of buttons) {
-      if (btn.textContent.trim().toLowerCase().includes('enter')) {
-        btn.click();
-        return btn.textContent.trim();
-      }
-    }
-    // Try any submit-like button
-    for (const btn of buttons) {
-      if (!btn.disabled) {
-        btn.click();
-        return btn.textContent.trim();
-      }
-    }
-  });
-  console.log("Clicked Enter World");
+  // Click enter
+  const clicked = await step("click-enter", () => page.evaluate(() => {
+    const buttons = [...document.querySelectorAll('button')];
+    const enter = buttons.find(b => b.textContent.trim().toLowerCase().includes('enter'));
+    if (enter) { enter.click(); return enter.textContent.trim(); }
+    const enabled = buttons.find(b => !b.disabled);
+    if (enabled) { enabled.click(); return enabled.textContent.trim(); }
+    return "no-button-found";
+  }));
+  console.log("Clicked:", clicked);
 
-  // Wait for world
-  await new Promise(r => setTimeout(r, 15000));
+  // Wait for world to load
+  await step("wait-for-world", () => new Promise(r => setTimeout(r, 20000)));
   lastScreenshot = await page.screenshot();
   botStatus = "in-world";
   console.log(`${AGENT_NAME} is in the world!`);
@@ -159,9 +155,13 @@ async function main() {
   setInterval(async () => {
     try {
       lastScreenshot = await page.screenshot();
-      console.log(new Date().toISOString(), AGENT_NAME, "alive");
+      const info = await page.evaluate(() => ({
+        url: window.location.href,
+        title: document.title,
+      }));
+      console.log(new Date().toISOString(), AGENT_NAME, "alive", info.url);
     } catch (e) {
-      console.error("Screenshot error:", e.message);
+      console.error("Keepalive error:", e.message);
     }
   }, 30000);
 
@@ -170,6 +170,6 @@ async function main() {
 
 main().catch(e => {
   console.error("Fatal:", e.message);
-  console.error("Stack:", e.stack);
+  console.error("Stack:", e.stack?.split('\n').slice(0, 5).join('\n'));
   botStatus = "crashed: " + e.message;
 });
