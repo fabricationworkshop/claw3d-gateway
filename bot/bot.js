@@ -95,34 +95,44 @@ async function main() {
   botStatus = "entering";
   await new Promise(r => setTimeout(r, 1000));
 
-  // Fill form
-  const inputs = await page.$$("input");
-  console.log(`Found ${inputs.length} inputs`);
-
-  if (inputs.length >= 1) {
-    await inputs[0].click({ clickCount: 3 });
-    await inputs[0].type(AGENT_NAME, { delay: 50 });
-    console.log("Typed name:", AGENT_NAME);
-  }
-
-  if (inputs.length >= 2 && WORLD_PASSWORD) {
-    await inputs[1].click({ clickCount: 3 });
-    await inputs[1].type(WORLD_PASSWORD, { delay: 50 });
-    console.log("Typed password");
-  }
-
-  await new Promise(r => setTimeout(r, 1000));
-
-  // Click Enter World
-  const buttons = await page.$$("button");
-  for (const btn of buttons) {
-    const text = await btn.evaluate(el => el.textContent.trim());
-    if (text.toLowerCase().includes("enter")) {
-      await btn.click();
-      console.log("Clicked:", text);
-      break;
+  // Fill form using page.evaluate for reliability in headless
+  await page.evaluate((name, password) => {
+    const inputs = document.querySelectorAll('input');
+    if (inputs[0]) {
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      nativeInputValueSetter.call(inputs[0], name);
+      inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+      inputs[0].dispatchEvent(new Event('change', { bubbles: true }));
     }
-  }
+    if (inputs[1] && password) {
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      nativeInputValueSetter.call(inputs[1], password);
+      inputs[1].dispatchEvent(new Event('input', { bubbles: true }));
+      inputs[1].dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }, AGENT_NAME, WORLD_PASSWORD);
+  console.log("Filled form:", AGENT_NAME);
+
+  await new Promise(r => setTimeout(r, 1500));
+
+  // Click Enter World using evaluate for reliability
+  await page.evaluate(() => {
+    const buttons = document.querySelectorAll('button');
+    for (const btn of buttons) {
+      if (btn.textContent.trim().toLowerCase().includes('enter')) {
+        btn.click();
+        return btn.textContent.trim();
+      }
+    }
+    // Try any submit-like button
+    for (const btn of buttons) {
+      if (!btn.disabled) {
+        btn.click();
+        return btn.textContent.trim();
+      }
+    }
+  });
+  console.log("Clicked Enter World");
 
   // Wait for world
   await new Promise(r => setTimeout(r, 15000));
