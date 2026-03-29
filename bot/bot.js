@@ -66,8 +66,34 @@ async function cleanup() {
   } catch {}
 }
 
+// Kill ALL stale Browserless sessions on startup to prevent ghost duplicates
+async function killStaleSessions() {
+  if (!BROWSERLESS_TOKEN) return;
+  try {
+    const res = await fetch(`https://chrome.browserless.io/sessions?token=${BROWSERLESS_TOKEN}`);
+    const sessions = await res.json();
+    if (!Array.isArray(sessions) || sessions.length === 0) {
+      console.log(`[${AGENT_NAME}] No stale sessions`);
+      return;
+    }
+    console.log(`[${AGENT_NAME}] Killing ${sessions.length} stale session(s)...`);
+    for (const s of sessions) {
+      const id = s.id || s.browserId;
+      if (id) {
+        await fetch(`https://chrome.browserless.io/sessions/${id}?token=${BROWSERLESS_TOKEN}`, { method: "DELETE" }).catch(() => {});
+      }
+    }
+    // Wait for sessions to fully close
+    await new Promise(r => setTimeout(r, 3000));
+    console.log(`[${AGENT_NAME}] Stale sessions cleared`);
+  } catch (e) {
+    console.log(`[${AGENT_NAME}] Session cleanup error:`, e.message);
+  }
+}
+
 async function enterWorld() {
   await cleanup();
+  await killStaleSessions();
 
   console.log(`=== ${AGENT_NAME} connecting ===`);
   botStatus = "connecting";
