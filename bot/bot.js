@@ -303,43 +303,97 @@ async function enterWorld() {
 
   botStatus = "entering";
 
-  // Try to pick the correct avatar in Topia's character selector (appears after form submit)
-  // Poll for up to 15s for the avatar picker, then click the matching character
-  const avatarName = AGENT_NAME; // e.g. "Adam", "Jeanie", etc.
-  let avatarPicked = false;
-  for (let i = 0; i < 15; i++) {
-    avatarPicked = await page.evaluate((name) => {
-      // Topia renders character cards — find one whose label/alt/text matches the agent name
-      const all = [...document.querySelectorAll("img, button, [role='button'], li, div")];
-      const match = all.find(el => {
-        const txt = (el.alt || el.textContent || el.getAttribute("aria-label") || "").trim();
-        return txt === name && el.offsetParent !== null;
-      });
-      if (match) { match.click(); return true; }
-      return false;
-    }, avatarName);
-    if (avatarPicked) { console.log(`[${AGENT_NAME}] Avatar clicked`); break; }
+  // Wait for form to go away first, then look for avatar picker
+  for (let i = 0; i < 30; i++) {
+    const formGone = await page.evaluate(() => !document.getElementById("displayName"));
+    if (formGone) break;
     await new Promise(r => setTimeout(r, 1000));
   }
-  if (!avatarPicked) console.log(`[${AGENT_NAME}] Avatar picker not found — using default`);
 
-  // Click confirm/OK/Enter if avatar picker has a confirm button
+  // Debug: log what's on screen after form submit
+  const pageState = await page.evaluate(() => {
+    const imgs = [...document.querySelectorAll("img")].map(i => ({
+      alt: i.alt, src: i.src?.substring(0, 80), w: i.width, h: i.height
+    })).filter(i => i.w > 30);
+    const buttons = [...document.querySelectorAll("button")].map(b => b.textContent.trim()).filter(Boolean);
+    const clickables = [...document.querySelectorAll("[role='button'], [data-testid]")].map(e => ({
+      role: e.getAttribute("role"),
+      testid: e.getAttribute("data-testid"),
+      text: e.textContent?.trim()?.substring(0, 40)
+    }));
+    return { imgs, buttons, clickables };
+  });
+  console.log(`[${AGENT_NAME}] Page after form:`, JSON.stringify(pageState));
+
+  // Try to pick avatar — multiple strategies
+  const avatarName = AGENT_NAME;
+  let avatarPicked = false;
+
+  for (let i = 0; i < 10; i++) {
+    avatarPicked = await page.evaluate((name) => {
+      const nameLower = name.toLowerCase();
+
+      // Strategy 1: exact text match on any visible element
+      const allEls = [...document.querySelectorAll("*")];
+      for (const el of allEls) {
+        if (el.children.length > 3) continue; // skip containers
+        const txt = (el.textContent || "").trim();
+        if (txt === name && el.offsetParent !== null && el.offsetWidth > 10) {
+          el.click();
+          return true;
+        }
+      }
+
+      // Strategy 2: img alt text
+      for (const img of document.querySelectorAll("img")) {
+        if ((img.alt || "").toLowerCase().includes(nameLower) && img.offsetParent) {
+          img.click();
+          return true;
+        }
+      }
+
+      // Strategy 3: aria-label
+      for (const el of document.querySelectorAll("[aria-label]")) {
+        if (el.getAttribute("aria-label").toLowerCase().includes(nameLower) && el.offsetParent) {
+          el.click();
+          return true;
+        }
+      }
+
+      // Strategy 4: data-testid containing the name
+      for (const el of document.querySelectorAll("[data-testid]")) {
+        if (el.getAttribute("data-testid").toLowerCase().includes(nameLower) && el.offsetParent) {
+          el.click();
+          return true;
+        }
+      }
+
+      return false;
+    }, avatarName);
+
+    if (avatarPicked) {
+      console.log(`[${AGENT_NAME}] Avatar selected!`);
+      break;
+    }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+
+  if (!avatarPicked) console.log(`[${AGENT_NAME}] Avatar picker not found — using default avatar`);
+
+  // Click any confirm/join/done button
   try {
     const confirmBtn = await page.evaluateHandle(() =>
       [...document.querySelectorAll("button")].find(b =>
-        /^(ok|confirm|enter|go|join|select|choose|done)$/i.test(b.textContent.trim()) && b.offsetParent
+        /^(ok|confirm|enter|go|join|select|choose|done|start|play)$/i.test(b.textContent.trim()) && b.offsetParent
       )
     );
     if (confirmBtn && confirmBtn.asElement()) {
       await confirmBtn.asElement().click();
-      console.log(`[${AGENT_NAME}] Avatar confirmed`);
+      console.log(`[${AGENT_NAME}] Confirmed avatar`);
     }
   } catch {}
 
-  await new Promise(r => setTimeout(r, 10000));
-
-  const state = await page.evaluate(() => ({ formGone: !document.getElementById("displayName") }));
-  if (!state.formGone) throw new Error("Entry failed — form still visible");
+  await new Promise(r => setTimeout(r, 8000));
 
   // Enable mic
   try {
@@ -567,24 +621,33 @@ async function getResponse(userMessage, history) {
   if (!ANTHROPIC_KEY) return "I need an API key to respond.";
   history.push({ role: "user", content: userMessage });
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": ANTHROPIC_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-3-5-haiku-20241022",
-      max_tokens: 100,
-      system: PERSONALITY,
-      messages: history.slice(-10),
-    }),
-  });
-  const data = await res.json();
-  const reply = data.content?.[0]?.text || "Sorry, couldn't process that.";
-  history.push({ role: "assistant", content: reply });
-  return reply;
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": ANTHROPIC_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 100,
+        system: PERSONALITY,
+        messages: history.slice(-10),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      console.error(`[${AGENT_NAME}] Claude API error:`, JSON.stringify(data.error || data));
+      return "Hmm, let me think about that for a moment.";
+    }
+    const reply = data.content?.[0]?.text || "Hmm, let me think about that.";
+    history.push({ role: "assistant", content: reply });
+    return reply;
+  } catch (e) {
+    console.error(`[${AGENT_NAME}] Claude fetch error:`, e.message);
+    return "Give me a second, I lost my train of thought.";
+  }
 }
 
 // Keepalive
