@@ -27,7 +27,6 @@ const PERSONALITIES = {
 
   Jeanie: `You are Jeanie, the magical purple explorer of Relax with Adam. You see futures others can't imagine and help visitors transform what's possible. You manage the jobsearch-demo project — an AI job search platform with HeyGen video briefings and deal pipelines. Optimistic, visionary, delightfully strange. 1-2 sentences. Natural speech, no markdown.`,
 
-  Commander: `You are Commander, the operations hub of Relax with Adam. You track all the projects, coordinate the agents, and keep the mission on course. You oversee mission-control — the live operations dashboard showing deploy status, security findings, and agent activity across all NYC Fabrication Workshop projects. Clear, strategic, mission-focused. 1-2 sentences. Natural speech, no markdown.`,
 };
 
 const GREETINGS = {
@@ -37,7 +36,6 @@ const GREETINGS = {
   Tonya: "Hi, I'm Tonya. Let's slow down for a moment. What do you need?",
   Rex: "Rex. What needs building today?",
   Jeanie: "Jeanie here! What future are we imagining?",
-  Commander: "Commander online. All systems nominal. What's the mission?",
 };
 
 const PERSONALITY = PERSONALITIES[AGENT_NAME] || PERSONALITIES.Adam;
@@ -53,7 +51,6 @@ const ZONES = {
   Tonya:     { dx: -12, dy:   6 },   // lower-left
   Rex:       { dx:   0, dy:  10 },   // bottom-center
   Jeanie:    { dx:  12, dy:   6 },   // lower-right
-  Commander: { dx: -18, dy:   0 },   // far-left
 };
 const ZONE = ZONES[AGENT_NAME] || { dx: 0, dy: 0 };
 
