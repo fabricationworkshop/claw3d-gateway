@@ -41,6 +41,16 @@ const GREETINGS = {
 const PERSONALITY = PERSONALITIES[AGENT_NAME] || PERSONALITIES.Adam;
 const GREETING = GREETINGS[AGENT_NAME] || GREETINGS.Adam;
 
+// ── Avatar alt-text mapping (from Topia's "Avatar selection" picker) ──────────
+const AVATAR_KEYWORD = {
+  Adam: "Original",
+  Bowie: "Astronaut",
+  Cobalt: "Fox",
+  Tonya: "Pumpkin",
+  Rex: "Dinosaur",
+  Jeanie: "Butterfly",
+};
+
 // ── Spatial zones: each agent gets a starting offset + wander area ────────────
 // After entering the world, each bot arrow-key-walks to their zone.
 // Then they wander within a small radius so conversations don't overlap.
@@ -292,108 +302,109 @@ async function enterWorld() {
   }
   await new Promise(r => setTimeout(r, 3000));
 
-  // Fill entry form
-  await page.evaluate(() => document.getElementById("displayName").focus());
-  await page.keyboard.type(AGENT_NAME, { delay: 20 });
-  await page.evaluate(() => document.getElementById("password").focus());
-  await page.keyboard.type(WORLD_PASSWORD, { delay: 20 });
-  await new Promise(r => setTimeout(r, 1000));
-  await page.evaluate(() => document.getElementById("password").focus());
-  await page.keyboard.press("Enter");
-
   botStatus = "entering";
 
-  // Wait for form to go away first, then look for avatar picker
+  // ── Avatar selection (BEFORE filling the form) ──────────────────────
+  // Flow: click "Change avatar" → click correct character image → click "Save Changes"
+  const avatarKeyword = AVATAR_KEYWORD[AGENT_NAME] || "Original";
+  console.log(`[${AGENT_NAME}] Selecting avatar: "${avatarKeyword}"`);
+
+  // Wait for the entry form page to fully render (up to 10s)
+  await new Promise(r => setTimeout(r, 3000));
+
+  // Step 1: Click "Change avatar"
+  let changeAvatarClicked = false;
+  for (let i = 0; i < 10; i++) {
+    const clicked = await page.evaluate(() => {
+      const btn = [...document.querySelectorAll("button, a, div, span")]
+        .find(el => el.textContent.trim() === "Change avatar" && el.offsetParent);
+      if (btn) { btn.click(); return true; }
+      return false;
+    });
+    if (clicked) { changeAvatarClicked = true; console.log(`[${AGENT_NAME}] Clicked "Change avatar"`); break; }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+
+  if (changeAvatarClicked) {
+    await new Promise(r => setTimeout(r, 2000));
+
+    // Step 2: Click the img with alt text containing our keyword
+    const avatarSelected = await page.evaluate((keyword) => {
+      const imgs = [...document.querySelectorAll("img")];
+      const match = imgs.find(img => img.alt && img.alt.includes(keyword) && img.offsetParent);
+      if (match) {
+        // Click the parent container (the clickable wrapper)
+        const clickTarget = match.closest("div[class]") || match;
+        clickTarget.click();
+        return match.alt;
+      }
+      return null;
+    }, avatarKeyword);
+
+    if (avatarSelected) {
+      console.log(`[${AGENT_NAME}] Avatar clicked: "${avatarSelected}"`);
+      await new Promise(r => setTimeout(r, 1000));
+
+      // Step 3: Click "Save Changes"
+      const saved = await page.evaluate(() => {
+        const btn = [...document.querySelectorAll("button")]
+          .find(b => b.textContent.trim() === "Save Changes" && b.offsetParent);
+        if (btn) { btn.click(); return true; }
+        return false;
+      });
+      if (saved) console.log(`[${AGENT_NAME}] Avatar saved!`);
+      else console.log(`[${AGENT_NAME}] Save Changes button not found`);
+    } else {
+      console.log(`[${AGENT_NAME}] Avatar "${avatarKeyword}" not found in picker`);
+      // Cancel and proceed with default
+      await page.evaluate(() => {
+        const btn = [...document.querySelectorAll("button")]
+          .find(b => b.textContent.trim() === "Cancel" && b.offsetParent);
+        if (btn) btn.click();
+      });
+    }
+  } else {
+    console.log(`[${AGENT_NAME}] "Change avatar" button not found`);
+  }
+
+  await new Promise(r => setTimeout(r, 3000));
+
+  // ── Fill entry form ─────────────────────────────────────────────────
+  // (form may still be visible — fill and submit)
+  const formVisible = await page.evaluate(() => !!document.getElementById("displayName"));
+  if (formVisible) {
+    await page.evaluate(() => document.getElementById("displayName").focus());
+    // Clear any existing text first
+    await page.keyboard.down("Control");
+    await page.keyboard.press("a");
+    await page.keyboard.up("Control");
+    await page.keyboard.type(AGENT_NAME, { delay: 20 });
+    await page.evaluate(() => document.getElementById("password").focus());
+    await page.keyboard.type(WORLD_PASSWORD, { delay: 20 });
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  // Click "Enter World" button
+  const enterClicked = await page.evaluate(() => {
+    const btn = [...document.querySelectorAll("button")]
+      .find(b => b.textContent.trim() === "Enter World" && b.offsetParent);
+    if (btn) { btn.click(); return true; }
+    return false;
+  });
+  if (enterClicked) console.log(`[${AGENT_NAME}] Clicked Enter World`);
+  else {
+    // Fallback: press Enter
+    await page.evaluate(() => document.getElementById("password")?.focus());
+    await page.keyboard.press("Enter");
+  }
+
+  // Wait for world to load
   for (let i = 0; i < 30; i++) {
     const formGone = await page.evaluate(() => !document.getElementById("displayName"));
     if (formGone) break;
     await new Promise(r => setTimeout(r, 1000));
   }
-
-  // Debug: log what's on screen after form submit
-  const pageState = await page.evaluate(() => {
-    const imgs = [...document.querySelectorAll("img")].map(i => ({
-      alt: i.alt, src: i.src?.substring(0, 80), w: i.width, h: i.height
-    })).filter(i => i.w > 30);
-    const buttons = [...document.querySelectorAll("button")].map(b => b.textContent.trim()).filter(Boolean);
-    const clickables = [...document.querySelectorAll("[role='button'], [data-testid]")].map(e => ({
-      role: e.getAttribute("role"),
-      testid: e.getAttribute("data-testid"),
-      text: e.textContent?.trim()?.substring(0, 40)
-    }));
-    return { imgs, buttons, clickables };
-  });
-  console.log(`[${AGENT_NAME}] Page after form:`, JSON.stringify(pageState));
-
-  // Try to pick avatar — multiple strategies
-  const avatarName = AGENT_NAME;
-  let avatarPicked = false;
-
-  for (let i = 0; i < 10; i++) {
-    avatarPicked = await page.evaluate((name) => {
-      const nameLower = name.toLowerCase();
-
-      // Strategy 1: exact text match on any visible element
-      const allEls = [...document.querySelectorAll("*")];
-      for (const el of allEls) {
-        if (el.children.length > 3) continue; // skip containers
-        const txt = (el.textContent || "").trim();
-        if (txt === name && el.offsetParent !== null && el.offsetWidth > 10) {
-          el.click();
-          return true;
-        }
-      }
-
-      // Strategy 2: img alt text
-      for (const img of document.querySelectorAll("img")) {
-        if ((img.alt || "").toLowerCase().includes(nameLower) && img.offsetParent) {
-          img.click();
-          return true;
-        }
-      }
-
-      // Strategy 3: aria-label
-      for (const el of document.querySelectorAll("[aria-label]")) {
-        if (el.getAttribute("aria-label").toLowerCase().includes(nameLower) && el.offsetParent) {
-          el.click();
-          return true;
-        }
-      }
-
-      // Strategy 4: data-testid containing the name
-      for (const el of document.querySelectorAll("[data-testid]")) {
-        if (el.getAttribute("data-testid").toLowerCase().includes(nameLower) && el.offsetParent) {
-          el.click();
-          return true;
-        }
-      }
-
-      return false;
-    }, avatarName);
-
-    if (avatarPicked) {
-      console.log(`[${AGENT_NAME}] Avatar selected!`);
-      break;
-    }
-    await new Promise(r => setTimeout(r, 1000));
-  }
-
-  if (!avatarPicked) console.log(`[${AGENT_NAME}] Avatar picker not found — using default avatar`);
-
-  // Click any confirm/join/done button
-  try {
-    const confirmBtn = await page.evaluateHandle(() =>
-      [...document.querySelectorAll("button")].find(b =>
-        /^(ok|confirm|enter|go|join|select|choose|done|start|play)$/i.test(b.textContent.trim()) && b.offsetParent
-      )
-    );
-    if (confirmBtn && confirmBtn.asElement()) {
-      await confirmBtn.asElement().click();
-      console.log(`[${AGENT_NAME}] Confirmed avatar`);
-    }
-  } catch {}
-
-  await new Promise(r => setTimeout(r, 8000));
+  await new Promise(r => setTimeout(r, 5000));
 
   // Enable mic
   try {
