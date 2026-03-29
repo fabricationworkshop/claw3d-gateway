@@ -309,7 +309,7 @@ async function enterWorld() {
                 active = false;
                 try { recorder.stop(); } catch {}
               }
-            }, 1000); // 1s silence = end of speech (faster response)
+            }, 2000); // 2s silence = end of speech (captures full sentences)
           }
           setTimeout(tick, 80);
         }
@@ -345,16 +345,23 @@ async function enterWorld() {
   // Wait for the entry form page to fully render (up to 10s)
   await new Promise(r => setTimeout(r, 3000));
 
-  // Step 1: Click "Change avatar"
+  // Step 1: Click "Change avatar" using Puppeteer native click (React needs this)
   let changeAvatarClicked = false;
   for (let i = 0; i < 10; i++) {
-    const clicked = await page.evaluate(() => {
-      const btn = [...document.querySelectorAll("button, a, div, span")]
-        .find(el => el.textContent.trim() === "Change avatar" && el.offsetParent);
-      if (btn) { btn.click(); return true; }
-      return false;
-    });
-    if (clicked) { changeAvatarClicked = true; console.log(`[${AGENT_NAME}] Clicked "Change avatar"`); break; }
+    try {
+      const btnHandle = await page.evaluateHandle(() => {
+        return [...document.querySelectorAll("button, a, div, span")]
+          .find(el => el.textContent.trim() === "Change avatar" && el.offsetParent);
+      });
+      if (btnHandle && btnHandle.asElement()) {
+        await btnHandle.asElement().click();
+        changeAvatarClicked = true;
+        console.log(`[${AGENT_NAME}] Clicked "Change avatar" (native click)`);
+        break;
+      }
+    } catch (e) {
+      console.log(`[${AGENT_NAME}] Change avatar click error:`, e.message);
+    }
     await new Promise(r => setTimeout(r, 1000));
   }
 
@@ -388,8 +395,8 @@ async function enterWorld() {
 
     await new Promise(r => setTimeout(r, 1000));
 
-    // Click the right avatar
-    const avatarSelected = await page.evaluate((keyword, fallbackIdx) => {
+    // Click the right avatar using coordinate-based Puppeteer click
+    const avatarCoords = await page.evaluate((keyword, fallbackIdx) => {
       const imgs = [...document.querySelectorAll("img")].filter(
         i => i.offsetParent && i.width > 50
       );
@@ -399,35 +406,43 @@ async function enterWorld() {
       // Strategy 1: alt text match
       const match = imgs.find(img => img.alt && img.alt.includes(keyword));
       if (match) {
-        const target = match.closest("div[class]") || match;
-        target.click();
-        return { method: "alt", alt: match.alt };
+        const r = match.getBoundingClientRect();
+        return { method: "alt", alt: match.alt, x: r.x + r.width / 2, y: r.y + r.height / 2 };
       }
 
       // Strategy 2: index into avatar-only images
       const avatarImgs = imgs.filter(i => i.alt && (i.alt.includes("Topi") || i.alt.includes("Avatar")));
       if (avatarImgs.length > fallbackIdx) {
-        const target = avatarImgs[fallbackIdx].closest("div[class]") || avatarImgs[fallbackIdx];
-        target.click();
-        return { method: "index", alt: avatarImgs[fallbackIdx].alt, idx: fallbackIdx };
+        const r = avatarImgs[fallbackIdx].getBoundingClientRect();
+        return { method: "index", alt: avatarImgs[fallbackIdx].alt, idx: fallbackIdx, x: r.x + r.width / 2, y: r.y + r.height / 2 };
       }
 
       return null;
     }, avatarKeyword, targetIndex);
 
+    // Use Puppeteer mouse click at the coordinates (triggers React events)
+    let avatarSelected = null;
+    if (avatarCoords) {
+      await page.mouse.click(avatarCoords.x, avatarCoords.y);
+      avatarSelected = avatarCoords;
+    }
+
     if (avatarSelected) {
       console.log(`[${AGENT_NAME}] Avatar selected via ${avatarSelected.method}: "${avatarSelected.alt}"`);
       await new Promise(r => setTimeout(r, 1500));
 
-      // Click "Save Changes" with retries
+      // Click "Save Changes" with native Puppeteer click
       for (let i = 0; i < 5; i++) {
-        const saved = await page.evaluate(() => {
-          const btn = [...document.querySelectorAll("button")]
-            .find(b => b.textContent.trim() === "Save Changes" && b.offsetParent);
-          if (btn) { btn.click(); return true; }
-          return false;
-        });
-        if (saved) { console.log(`[${AGENT_NAME}] Avatar saved!`); break; }
+        try {
+          const saveBtn = await page.evaluateHandle(() =>
+            [...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Save Changes" && b.offsetParent)
+          );
+          if (saveBtn && saveBtn.asElement()) {
+            await saveBtn.asElement().click();
+            console.log(`[${AGENT_NAME}] Avatar saved!`);
+            break;
+          }
+        } catch {}
         await new Promise(r => setTimeout(r, 1000));
       }
     } else {
