@@ -51,18 +51,16 @@ const AVATAR_KEYWORD = {
   Jeanie: "Butterfly",
 };
 
-// ── Spatial zones: each agent gets a starting offset + wander area ────────────
-// After entering the world, each bot arrow-key-walks to their zone.
-// Then they wander within a small radius so conversations don't overlap.
-const ZONES = {
-  Adam:      { dx:   0, dy:   0 },   // center — the host
-  Bowie:     { dx: -12, dy:  -6 },   // upper-left
-  Cobalt:    { dx:  12, dy:  -6 },   // upper-right
-  Tonya:     { dx: -12, dy:   6 },   // lower-left
-  Rex:       { dx:   0, dy:  10 },   // bottom-center
-  Jeanie:    { dx:  12, dy:   6 },   // lower-right
+// ── Exact spawn coordinates from Topia world builder ─────────────────────────
+const SPAWN_COORDS = {
+  Adam:   { x: -949,  y: 9 },
+  Bowie:  { x: -1132, y: -3122 },
+  Cobalt: { x: -6526, y: -3751 },
+  Tonya:  { x: 3433,  y: 6000 },
+  Rex:    { x: 6057,  y: -4458 },
+  Jeanie: { x: -5103, y: 1088 },
 };
-const ZONE = ZONES[AGENT_NAME] || { dx: 0, dy: 0 };
+const SPAWN = SPAWN_COORDS[AGENT_NAME] || { x: 0, y: 0 };
 
 let botStatus = "starting";
 let browser = null;
@@ -463,12 +461,12 @@ async function enterWorld() {
   botStatus = "in-world";
   console.log(`[${AGENT_NAME}] In the world and listening!`);
 
-  // Walk to assigned zone
-  await walkToZone();
+  // Teleport to spawn position
+  await teleportToSpawn();
 
   await speak(GREETING);
 
-  // Start wandering
+  // Start gentle wandering (very slight — preserves spatial audio)
   startWandering();
 
   browser.on("disconnected", () => {
@@ -480,55 +478,96 @@ async function enterWorld() {
   });
 }
 
-// Walk to the agent's designated zone using arrow keys
-async function walkToZone() {
+// Teleport to exact spawn coordinates
+async function teleportToSpawn() {
   if (!page) return;
-  const { dx, dy } = ZONE;
-  console.log(`[${AGENT_NAME}] Walking to zone (dx=${dx}, dy=${dy})...`);
+  const { x, y } = SPAWN;
+  console.log(`[${AGENT_NAME}] Teleporting to (${x}, ${y})...`);
 
-  // Horizontal
-  const hKey = dx > 0 ? "ArrowRight" : "ArrowLeft";
-  for (let i = 0; i < Math.abs(dx); i++) {
-    await page.keyboard.press(hKey);
-    await new Promise(r => setTimeout(r, 200));
+  // Try multiple strategies to set position in Topia
+  const teleported = await page.evaluate((targetX, targetY) => {
+    // Strategy 1: look for Topia's internal player/world object
+    const globals = ["__TOPIA__", "topia", "game", "world", "app"];
+    for (const g of globals) {
+      const obj = window[g];
+      if (obj?.player) {
+        obj.player.x = targetX;
+        obj.player.y = targetY;
+        return "global." + g;
+      }
+    }
+
+    // Strategy 2: search React fiber tree for player position setter
+    try {
+      const canvas = document.querySelector("canvas");
+      if (canvas) {
+        const fiberKey = Object.keys(canvas).find(k => k.startsWith("__reactFiber") || k.startsWith("__reactInternalInstance"));
+        if (fiberKey) {
+          let fiber = canvas[fiberKey];
+          for (let i = 0; i < 30 && fiber; i++) {
+            const state = fiber.memoizedState || fiber.stateNode?.state;
+            if (state?.player || state?.position) {
+              return "fiber-found";
+            }
+            fiber = fiber.return;
+          }
+        }
+      }
+    } catch {}
+
+    // Strategy 3: dispatch a custom move event
+    try {
+      window.dispatchEvent(new CustomEvent("topia:teleport", { detail: { x: targetX, y: targetY } }));
+    } catch {}
+
+    return null;
+  }, x, y);
+
+  if (teleported) {
+    console.log(`[${AGENT_NAME}] Teleported via ${teleported}`);
+  } else {
+    // Fallback: use arrow keys to walk toward the target from spawn
+    // Topia arrow key = ~48 units per press, spawn point is roughly (0, 0)
+    console.log(`[${AGENT_NAME}] JS teleport failed, walking via arrow keys...`);
+    const stepsPerUnit = 48; // approximate pixels per arrow key press
+    const dx = Math.round(x / stepsPerUnit);
+    const dy = Math.round(y / stepsPerUnit);
+
+    // Cap at 200 steps max to avoid taking forever
+    const maxSteps = 200;
+    const hSteps = Math.min(Math.abs(dx), maxSteps);
+    const vSteps = Math.min(Math.abs(dy), maxSteps);
+
+    const hKey = dx > 0 ? "ArrowRight" : "ArrowLeft";
+    for (let i = 0; i < hSteps; i++) {
+      await page.keyboard.press(hKey);
+      if (i % 10 === 0) await new Promise(r => setTimeout(r, 50));
+    }
+
+    const vKey = dy > 0 ? "ArrowDown" : "ArrowUp";
+    for (let i = 0; i < vSteps; i++) {
+      await page.keyboard.press(vKey);
+      if (i % 10 === 0) await new Promise(r => setTimeout(r, 50));
+    }
+
+    console.log(`[${AGENT_NAME}] Walked ${hSteps}h + ${vSteps}v steps`);
   }
-  // Vertical
-  const vKey = dy > 0 ? "ArrowDown" : "ArrowUp";
-  for (let i = 0; i < Math.abs(dy); i++) {
-    await page.keyboard.press(vKey);
-    await new Promise(r => setTimeout(r, 200));
-  }
-  console.log(`[${AGENT_NAME}] Arrived at zone`);
 }
 
-// Wander in small random patterns — stop while speaking
+// Very gentle wandering — 1 step every 30-60s, freezes when speaking
 function startWandering() {
   const DIRECTIONS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
 
   async function wander() {
     if (!page || botStatus !== "in-world") return;
-    if (isResponding || isMoving) return; // don't move while talking
+    if (isResponding || isMoving) return;
 
     isMoving = true;
     try {
-      // Random walk: 1-3 steps in a random direction
+      // Just 1 step in a random direction — very slight
       const dir = DIRECTIONS[Math.floor(Math.random() * 4)];
-      const steps = 1 + Math.floor(Math.random() * 3);
-      for (let i = 0; i < steps; i++) {
-        if (isResponding) break; // freeze if someone starts talking
+      if (!isResponding) {
         await page.keyboard.press(dir);
-        await new Promise(r => setTimeout(r, 250));
-      }
-
-      // Sometimes do a second direction for diagonal movement
-      if (Math.random() > 0.5 && !isResponding) {
-        const dir2 = DIRECTIONS[Math.floor(Math.random() * 4)];
-        const steps2 = 1 + Math.floor(Math.random() * 2);
-        for (let i = 0; i < steps2; i++) {
-          if (isResponding) break;
-          await page.keyboard.press(dir2);
-          await new Promise(r => setTimeout(r, 250));
-        }
       }
     } catch (e) {
       console.log(`[${AGENT_NAME}] Wander error:`, e.message);
@@ -536,16 +575,16 @@ function startWandering() {
     isMoving = false;
   }
 
-  // Wander every 15-45 seconds
+  // Wander every 30-60 seconds — very gentle
   function scheduleNext() {
-    const delay = 15000 + Math.floor(Math.random() * 30000);
+    const delay = 30000 + Math.floor(Math.random() * 30000);
     setTimeout(async () => {
       await wander();
       if (botStatus === "in-world") scheduleNext();
     }, delay);
   }
   scheduleNext();
-  console.log(`[${AGENT_NAME}] Wandering started`);
+  console.log(`[${AGENT_NAME}] Gentle wandering started`);
 }
 
 function scheduleReconnect() {
