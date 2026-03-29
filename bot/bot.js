@@ -278,8 +278,8 @@ async function enterWorld() {
         recorder.onstop = async () => {
           const duration = Date.now() - recordStart;
           const blob = new Blob(chunks.splice(0), { type: "audio/webm" });
-          // Ignore very short recordings (<0.5s) or tiny files — likely noise
-          if (blob.size < 5000 || duration < 500) {
+          // Ignore very short recordings (<1.5s) — likely noise or fragments
+          if (blob.size < 3000 || duration < 1500) {
             console.log("[BOT] Ignoring short audio:", duration + "ms", blob.size + "b");
             return;
           }
@@ -298,18 +298,20 @@ async function enterWorld() {
           analyser.getByteFrequencyData(freqData);
           const rms = Math.sqrt(freqData.reduce((s, v) => s + v * v, 0) / freqData.length);
 
-          if (rms > 20) { // higher threshold to filter ambient noise
+          if (rms > 15) {
             if (!active) {
               active = true;
               try { recorder.start(); } catch {}
+              console.log("[BOT] Recording started");
             }
             clearTimeout(silenceTimer);
             silenceTimer = setTimeout(() => {
               if (active) {
                 active = false;
                 try { recorder.stop(); } catch {}
+                console.log("[BOT] Recording stopped (3s silence)");
               }
-            }, 2000); // 2s silence = end of speech (captures full sentences)
+            }, 3000); // 3s silence = end of speech — allows natural pauses
           }
           setTimeout(tick, 80);
         }
@@ -732,6 +734,8 @@ async function transcribe(audioB64) {
 
     const body = Buffer.concat([
       Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-1\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\nen\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nA person is having a conversation in a meditation game world. They are speaking naturally about meditation, relaxation, or asking questions.\r\n`),
       Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.webm"\r\nContent-Type: audio/webm\r\n\r\n`),
       binary,
       Buffer.from(`\r\n--${boundary}--\r\n`),
