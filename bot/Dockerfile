@@ -6,3 +6,4 @@ RUN npm install
 COPY bot.js ./
 
 CMD ["node", "bot.js"]
+# Build 1774766546
