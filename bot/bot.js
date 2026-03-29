@@ -4,39 +4,37 @@ const http = require("http");
 const BROWSERLESS_TOKEN = process.env.BROWSERLESS_TOKEN || "";
 const WORLD_URL = process.env.TOPIA_WORLD_URL || "https://topia.io/relaxwithadam";
 const WORLD_PASSWORD = process.env.TOPIA_WORLD_PASSWORD || "breathe";
-const AGENT_NAME = process.env.AGENT_NAME || "Commander";
 const PORT = process.env.PORT || 7860;
 
-let botStatus = "starting";
-let lastScreenshot = null;
-let reconnectAttempts = 0;
+const AGENTS = [
+  { name: "Commander", avatar: 0 },
+  { name: "Security Scout", avatar: 1 },
+  { name: "Performance Knight", avatar: 2 },
+  { name: "Index Ranger", avatar: 3 },
+  { name: "Build Fixer", avatar: 4 },
+  { name: "Deep Scanner", avatar: 5 },
+  { name: "3D Architect", avatar: 1 },
+];
+
+const agentStatus = {};
+AGENTS.forEach((a) => (agentStatus[a.name] = "pending"));
 
 // Health server
 http.createServer((req, res) => {
-  if (req.url === "/screenshot" && lastScreenshot) {
-    res.writeHead(200, { "Content-Type": "image/png" });
-    res.end(lastScreenshot);
-    return;
-  }
   res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ agent: AGENT_NAME, status: botStatus, uptime: process.uptime(), reconnects: reconnectAttempts }));
+  res.end(JSON.stringify({ agents: agentStatus, uptime: process.uptime() }));
 }).listen(PORT, () => console.log(`Health server on :${PORT}`));
 
-async function enterWorld() {
-  console.log(`=== ${AGENT_NAME} connecting via Browserless ===`);
-  botStatus = "connecting";
-
-  const browser = await puppeteer.connect({
-    browserWSEndpoint: `wss://chrome.browserless.io?token=${BROWSERLESS_TOKEN}`,
-  });
-  console.log("Connected to Browserless");
+async function enterAgent(browser, agent, delayMs) {
+  await new Promise((r) => setTimeout(r, delayMs));
+  const { name, avatar } = agent;
+  console.log(`[${name}] Opening page...`);
+  agentStatus[name] = "loading";
 
   const page = await browser.newPage();
   await page.goto(WORLD_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-  console.log("Page loaded");
-  botStatus = "loading";
 
-  // Wait for form inputs
+  // Wait for form
   for (let i = 0; i < 20; i++) {
     const count = await page.evaluate(() => document.querySelectorAll("input").length);
     if (count > 0) break;
@@ -44,89 +42,90 @@ async function enterWorld() {
   }
   await new Promise((r) => setTimeout(r, 3000));
 
-  // Focus and type into Display Name (#displayName — index 1, index 0 is hidden HubSpot)
+  // Change avatar if not default
+  if (avatar > 0) {
+    try {
+      await page.evaluate((idx) => {
+        const arrows = document.querySelectorAll('button');
+        const rightArrow = [...arrows].find(b => b.textContent.includes('arrowRight'));
+        for (let i = 0; i < idx; i++) {
+          if (rightArrow) rightArrow.click();
+        }
+      }, avatar);
+      await new Promise((r) => setTimeout(r, 500));
+      console.log(`[${name}] Changed avatar (${avatar} clicks)`);
+    } catch (e) {
+      console.log(`[${name}] Avatar change skipped:`, e.message);
+    }
+  }
+
+  // Fill display name
   await page.evaluate(() => document.getElementById("displayName").focus());
-  await page.keyboard.type(AGENT_NAME, { delay: 30 });
-  console.log("Typed name:", AGENT_NAME);
+  await page.keyboard.type(name, { delay: 20 });
 
-  // Focus and type password
+  // Fill password
   await page.evaluate(() => document.getElementById("password").focus());
-  await page.keyboard.type(WORLD_PASSWORD, { delay: 30 });
-  console.log("Typed password");
-
-  // Verify
-  const vals = await page.evaluate(() => ({
-    name: document.getElementById("displayName").value,
-    pass: document.getElementById("password").value,
-  }));
-  console.log("Form values:", vals);
+  await page.keyboard.type(WORLD_PASSWORD, { delay: 20 });
 
   await new Promise((r) => setTimeout(r, 1000));
 
-  // Press Enter to submit
+  // Submit
   await page.evaluate(() => document.getElementById("password").focus());
   await page.keyboard.press("Enter");
-  console.log("Pressed Enter");
+  console.log(`[${name}] Submitted form`);
+  agentStatus[name] = "entering";
 
-  // Wait for world to load
+  // Wait for world
   await new Promise((r) => setTimeout(r, 20000));
 
   const state = await page.evaluate(() => ({
     formVisible: !!document.getElementById("displayName"),
-    canvases: document.querySelectorAll("canvas").length,
   }));
 
   if (state.formVisible) {
-    throw new Error("Form still visible after submit — entry failed");
+    agentStatus[name] = "failed";
+    console.error(`[${name}] Entry failed — form still visible`);
+    return;
   }
 
-  lastScreenshot = await page.screenshot();
-  botStatus = "in-world";
-  console.log(`${AGENT_NAME} is in the world!`);
+  agentStatus[name] = "in-world";
+  console.log(`[${name}] IN THE WORLD`);
+}
 
-  // Keepalive loop — screenshot every 30s, detect disconnection
-  const keepalive = setInterval(async () => {
+async function main() {
+  console.log("=== Topia Agent Squad ===");
+  console.log(`Connecting to Browserless with ${AGENTS.length} agents...`);
+
+  const browser = await puppeteer.connect({
+    browserWSEndpoint: `wss://chrome.browserless.io?token=${BROWSERLESS_TOKEN}`,
+  });
+  console.log("Connected to Browserless");
+
+  // Enter agents sequentially with delays to avoid rate limiting
+  for (const agent of AGENTS) {
     try {
-      lastScreenshot = await page.screenshot();
-      console.log(new Date().toISOString(), AGENT_NAME, "alive");
+      await enterAgent(browser, agent, 5000);
     } catch (e) {
-      console.error("Keepalive failed:", e.message);
-      clearInterval(keepalive);
-      botStatus = "disconnected";
-      // Trigger reconnect
-      reconnect();
+      console.error(`[${agent.name}] Error:`, e.message);
+      agentStatus[agent.name] = "error: " + e.message;
     }
-  }, 30000);
+  }
 
-  // Handle browser disconnect
+  const inWorld = Object.values(agentStatus).filter((s) => s === "in-world").length;
+  console.log(`\n=== ${inWorld}/${AGENTS.length} agents in world ===`);
+
+  // Keepalive
   browser.on("disconnected", () => {
-    console.log("Browser disconnected");
-    clearInterval(keepalive);
-    botStatus = "disconnected";
-    reconnect();
+    console.log("Browser disconnected — all agents lost");
+    Object.keys(agentStatus).forEach((k) => (agentStatus[k] = "disconnected"));
+    setTimeout(() => {
+      console.log("Reconnecting...");
+      main().catch(console.error);
+    }, 10000);
   });
 }
 
-async function reconnect() {
-  reconnectAttempts++;
-  const delay = Math.min(30000, 5000 * reconnectAttempts);
-  console.log(`Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempts})...`);
-  botStatus = `reconnecting (${reconnectAttempts})`;
-  await new Promise((r) => setTimeout(r, delay));
-
-  try {
-    await enterWorld();
-    reconnectAttempts = 0;
-  } catch (e) {
-    console.error("Reconnect failed:", e.message);
-    botStatus = "reconnect-failed: " + e.message;
-    reconnect();
-  }
-}
-
-// Start
-enterWorld().catch((e) => {
+main().catch((e) => {
   console.error("Fatal:", e.message);
-  botStatus = "crashed: " + e.message;
-  reconnect();
+  setTimeout(() => main().catch(console.error), 15000);
 });
