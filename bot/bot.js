@@ -8,6 +8,7 @@ const AGENT_NAME = process.env.AGENT_NAME || "Commander";
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
 const ELEVENLABS_KEY = process.env.ELEVENLABS_API_KEY || "";
 const ELEVENLABS_VOICE = process.env.ELEVENLABS_VOICE_ID || "IZt4o6EpGPON08MHCsHt";
+const OPENAI_KEY = process.env.OPENAI_API_KEY || "";
 const PORT = process.env.PORT || 7860;
 
 const PERSONALITY = `You are ${AGENT_NAME}, an AI agent in a virtual Topia world. You manage software projects for NYC Fabrication Workshop. Be conversational, concise (1-2 sentences), natural speech — no markdown. Projects: abw-testing (OCR), honed-earth (stone ERP), toys-comics (inventory), electrical-experts, abw-2026 (CMS), music-demo (therapy), jobsearch-demo (job search), kimi-workshop.`;
@@ -16,6 +17,8 @@ let botStatus = "starting";
 let browser = null;
 let page = null;
 let isReconnecting = false;
+let isResponding = false;
+const conversationHistory = [];
 
 // Health server
 http.createServer((req, res) => {
@@ -34,7 +37,6 @@ async function cleanup() {
 }
 
 async function enterWorld() {
-  // Clean up any existing session first — prevents duplicates
   await cleanup();
 
   console.log(`=== ${AGENT_NAME} connecting ===`);
@@ -48,25 +50,42 @@ async function enterWorld() {
   const ctx = browser.defaultBrowserContext();
   await ctx.overridePermissions("https://topia.io", ["microphone", "camera"]);
 
-  // Inject synthetic media + audio playback before page loads
+  // Expose speech handler BEFORE navigation so it's ready when RTC fires
+  await page.exposeFunction("_botSpeechDetected", async (audioB64) => {
+    if (isResponding) { console.log("[BOT] Busy, skipping speech"); return; }
+    isResponding = true;
+    try {
+      const text = await transcribe(audioB64);
+      if (!text || text.trim().length < 3) return;
+      console.log(`[HEARD] "${text}"`);
+      const reply = await getResponse(text, conversationHistory);
+      console.log(`[REPLY] "${reply}"`);
+      await speak(reply);
+    } catch (e) {
+      console.error("Voice loop error:", e.message);
+    } finally {
+      isResponding = false;
+    }
+  });
+
+  // Inject synthetic media + audio playback + RTC listener before page loads
   await page.evaluateOnNewDocument(() => {
-    // Override getUserMedia
+    // ── Synthetic outgoing audio (bot's mic) ──────────────────────────────
     const origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
     navigator.mediaDevices.getUserMedia = async function (constraints) {
       if (constraints.audio) {
-        const ctx = new AudioContext({ sampleRate: 48000 });
-        const dest = ctx.createMediaStreamDestination();
-        const osc = ctx.createOscillator();
+        const actx = new AudioContext({ sampleRate: 48000 });
+        const dest = actx.createMediaStreamDestination();
+        const osc = actx.createOscillator();
         osc.frequency.value = 0;
         osc.connect(dest);
         osc.start();
 
-        // Gain node for injecting TTS audio
-        const gain = ctx.createGain();
+        const gain = actx.createGain();
         gain.gain.value = 1.0;
         gain.connect(dest);
 
-        window._botAudioCtx = ctx;
+        window._botAudioCtx = actx;
         window._botGain = gain;
         window._botDest = dest;
 
@@ -101,19 +120,19 @@ async function enterWorld() {
       ];
     };
 
-    // Function to play audio through the bot's mic
+    // Play TTS audio through the bot's mic stream
     window._playAudioBase64 = async function (b64) {
-      const ctx = window._botAudioCtx;
+      const actx = window._botAudioCtx;
       const gain = window._botGain;
-      if (!ctx || !gain) { console.log("[BOT] No audio context"); return; }
+      if (!actx || !gain) { console.log("[BOT] No audio context"); return; }
 
       const binary = atob(b64);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
       try {
-        const buf = await ctx.decodeAudioData(bytes.buffer.slice(0));
-        const src = ctx.createBufferSource();
+        const buf = await actx.decodeAudioData(bytes.buffer.slice(0));
+        const src = actx.createBufferSource();
         src.buffer = buf;
         src.connect(gain);
         src.start();
@@ -123,6 +142,76 @@ async function enterWorld() {
         console.log("[BOT] Audio decode error:", e.message);
       }
     };
+
+    // ── Incoming audio capture (listening to users) ───────────────────────
+    const OrigPC = window.RTCPeerConnection;
+
+    function BotPC(...args) {
+      const pc = new OrigPC(...args);
+
+      pc.addEventListener("track", ({ track }) => {
+        if (track.kind !== "audio") return;
+        console.log("[BOT] Got remote audio track — listening");
+
+        const stream = new MediaStream([track]);
+        const lctx = new AudioContext({ sampleRate: 48000 });
+        const src = lctx.createMediaStreamSource(stream);
+        const analyser = lctx.createAnalyser();
+        analyser.fftSize = 512;
+        src.connect(analyser);
+
+        const recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+        const chunks = [];
+        let active = false;
+        let silenceTimer = null;
+        const freqData = new Uint8Array(analyser.frequencyBinCount);
+
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) chunks.push(e.data);
+        };
+
+        recorder.onstop = async () => {
+          const blob = new Blob(chunks.splice(0), { type: "audio/webm" });
+          if (blob.size < 2000) return; // ignore tiny noise blips
+          const arr = new Uint8Array(await blob.arrayBuffer());
+          // chunk-encode to avoid call stack overflow on large buffers
+          let b64 = "";
+          for (let i = 0; i < arr.length; i += 8192) {
+            b64 += btoa(String.fromCharCode(...arr.subarray(i, i + 8192)));
+          }
+          console.log("[BOT] Speech captured, sending for transcription");
+          window._botSpeechDetected(b64);
+        };
+
+        function tick() {
+          analyser.getByteFrequencyData(freqData);
+          const rms = Math.sqrt(freqData.reduce((s, v) => s + v * v, 0) / freqData.length);
+
+          if (rms > 10) {
+            if (!active) {
+              active = true;
+              try { recorder.start(); } catch {}
+            }
+            clearTimeout(silenceTimer);
+            silenceTimer = setTimeout(() => {
+              if (active) {
+                active = false;
+                try { recorder.stop(); } catch {}
+              }
+            }, 1500);
+          }
+          setTimeout(tick, 80);
+        }
+        tick();
+      });
+
+      return pc;
+    }
+
+    // Copy static props and prototype so Topia's instanceof checks pass
+    Object.setPrototypeOf(BotPC, OrigPC);
+    BotPC.prototype = OrigPC.prototype;
+    window.RTCPeerConnection = BotPC;
   });
 
   // Navigate
@@ -136,7 +225,7 @@ async function enterWorld() {
   }
   await new Promise(r => setTimeout(r, 3000));
 
-  // Fill form
+  // Fill entry form
   await page.evaluate(() => document.getElementById("displayName").focus());
   await page.keyboard.type(AGENT_NAME, { delay: 20 });
   await page.evaluate(() => document.getElementById("password").focus());
@@ -148,12 +237,10 @@ async function enterWorld() {
   botStatus = "entering";
   await new Promise(r => setTimeout(r, 20000));
 
-  const state = await page.evaluate(() => ({
-    formGone: !document.getElementById("displayName"),
-  }));
+  const state = await page.evaluate(() => ({ formGone: !document.getElementById("displayName") }));
   if (!state.formGone) throw new Error("Entry failed — form still visible");
 
-  // Enable mic — use Puppeteer click for React compat
+  // Enable mic
   try {
     const micPrompt = await page.evaluateHandle(() =>
       [...document.querySelectorAll("button")].find(b =>
@@ -166,14 +253,13 @@ async function enterWorld() {
   } catch (e) { console.log("Mic prompt click:", e.message); }
   await new Promise(r => setTimeout(r, 3000));
 
-  // Unmute — try multiple approaches
+  // Unmute with retries
   for (let attempt = 0; attempt < 3; attempt++) {
     const isMuted = await page.evaluate(() => !!document.querySelector('[data-testid="micOff icon"]'));
     if (!isMuted) { console.log("Mic is ON"); break; }
     console.log(`Unmute attempt ${attempt + 1}...`);
 
     try {
-      // Approach 1: Puppeteer click on Unmute button handle
       const unmuteBtn = await page.evaluateHandle(() =>
         [...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Unmute")
       );
@@ -185,7 +271,6 @@ async function enterWorld() {
 
     await new Promise(r => setTimeout(r, 2000));
 
-    // Approach 2: Click the micOff icon's parent button via coordinates
     const stillMuted = await page.evaluate(() => !!document.querySelector('[data-testid="micOff icon"]'));
     if (stillMuted) {
       try {
@@ -214,12 +299,10 @@ async function enterWorld() {
   console.log("Final mic state:", JSON.stringify(finalMicState));
 
   botStatus = "in-world";
-  console.log(`${AGENT_NAME} is in the world!`);
+  console.log(`${AGENT_NAME} is in the world and listening!`);
 
-  // Greet on entry
-  await speak("Hey! Commander here. I'm your AI ops agent. Walk up and talk to me about any of your projects.");
+  await speak("Hey! Commander here. Walk up and talk to me about any of your projects.");
 
-  // Handle disconnect — cleanup before reconnecting
   browser.on("disconnected", () => {
     console.log("Browser disconnected");
     botStatus = "disconnected";
@@ -243,6 +326,40 @@ function scheduleReconnect() {
       scheduleReconnect();
     }
   }, 15000);
+}
+
+async function transcribe(audioB64) {
+  if (!OPENAI_KEY) {
+    console.log("[BOT] No OPENAI_API_KEY — cannot transcribe");
+    return null;
+  }
+  try {
+    const binary = Buffer.from(audioB64, "base64");
+    const boundary = "----Boundary" + Date.now().toString(36);
+
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-1\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.webm"\r\nContent-Type: audio/webm\r\n\r\n`),
+      binary,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+
+    const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_KEY}`,
+        "Content-Type": `multipart/form-data; boundary=${boundary}`,
+      },
+      body,
+    });
+
+    const data = await res.json();
+    if (!res.ok) { console.error("Whisper error:", JSON.stringify(data)); return null; }
+    return data.text || null;
+  } catch (e) {
+    console.error("Transcribe error:", e.message);
+    return null;
+  }
 }
 
 async function speak(text) {
