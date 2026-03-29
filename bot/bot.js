@@ -101,13 +101,16 @@ async function main() {
   });
   console.log("Connected to Browserless");
 
-  // Enter agents sequentially with delays to avoid rate limiting
-  for (const agent of AGENTS) {
+  // Enter agents one at a time with long delays between each
+  // Each agent needs ~30s to fully enter before starting the next
+  for (let i = 0; i < AGENTS.length; i++) {
     try {
-      await enterAgent(browser, agent, 5000);
+      await enterAgent(browser, AGENTS[i], i === 0 ? 0 : 10000);
     } catch (e) {
-      console.error(`[${agent.name}] Error:`, e.message);
-      agentStatus[agent.name] = "error: " + e.message;
+      console.error(`[${AGENTS[i].name}] Error:`, e.message);
+      agentStatus[AGENTS[i].name] = "error: " + e.message;
+      // Wait before trying next agent
+      await new Promise((r) => setTimeout(r, 5000));
     }
   }
 
