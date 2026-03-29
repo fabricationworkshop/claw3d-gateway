@@ -264,7 +264,41 @@ async function enterWorld() {
   await page.keyboard.press("Enter");
 
   botStatus = "entering";
-  await new Promise(r => setTimeout(r, 20000));
+
+  // Try to pick the correct avatar in Topia's character selector (appears after form submit)
+  // Poll for up to 15s for the avatar picker, then click the matching character
+  const avatarName = AGENT_NAME; // e.g. "Adam", "Jeanie", etc.
+  let avatarPicked = false;
+  for (let i = 0; i < 15; i++) {
+    avatarPicked = await page.evaluate((name) => {
+      // Topia renders character cards — find one whose label/alt/text matches the agent name
+      const all = [...document.querySelectorAll("img, button, [role='button'], li, div")];
+      const match = all.find(el => {
+        const txt = (el.alt || el.textContent || el.getAttribute("aria-label") || "").trim();
+        return txt === name && el.offsetParent !== null;
+      });
+      if (match) { match.click(); return true; }
+      return false;
+    }, avatarName);
+    if (avatarPicked) { console.log(`[${AGENT_NAME}] Avatar clicked`); break; }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  if (!avatarPicked) console.log(`[${AGENT_NAME}] Avatar picker not found — using default`);
+
+  // Click confirm/OK/Enter if avatar picker has a confirm button
+  try {
+    const confirmBtn = await page.evaluateHandle(() =>
+      [...document.querySelectorAll("button")].find(b =>
+        /^(ok|confirm|enter|go|join|select|choose|done)$/i.test(b.textContent.trim()) && b.offsetParent
+      )
+    );
+    if (confirmBtn && confirmBtn.asElement()) {
+      await confirmBtn.asElement().click();
+      console.log(`[${AGENT_NAME}] Avatar confirmed`);
+    }
+  } catch {}
+
+  await new Promise(r => setTimeout(r, 10000));
 
   const state = await page.evaluate(() => ({ formGone: !document.getElementById("displayName") }));
   if (!state.formGone) throw new Error("Entry failed — form still visible");
