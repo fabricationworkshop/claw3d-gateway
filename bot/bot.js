@@ -4,14 +4,44 @@ const http = require("http");
 const BROWSERLESS_TOKEN = process.env.BROWSERLESS_TOKEN || "";
 const WORLD_URL = process.env.TOPIA_WORLD_URL || "https://topia.io/relaxwithadam";
 const WORLD_PASSWORD = process.env.TOPIA_WORLD_PASSWORD || "breathe";
-const AGENT_NAME = process.env.AGENT_NAME || "Commander";
+const AGENT_NAME = process.env.AGENT_NAME || "Adam";
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
 const ELEVENLABS_KEY = process.env.ELEVENLABS_API_KEY || "";
-const ELEVENLABS_VOICE = process.env.ELEVENLABS_VOICE_ID || "IZt4o6EpGPON08MHCsHt";
+const ELEVENLABS_VOICE = process.env.ELEVENLABS_VOICE_ID || "";
 const OPENAI_KEY = process.env.OPENAI_API_KEY || "";
 const PORT = process.env.PORT || 7860;
 
-const PERSONALITY = `You are ${AGENT_NAME}, an AI agent in a virtual Topia world. You manage software projects for NYC Fabrication Workshop. Be conversational, concise (1-2 sentences), natural speech — no markdown. Projects: abw-testing (OCR), honed-earth (stone ERP), toys-comics (inventory), electrical-experts, abw-2026 (CMS), music-demo (therapy), jobsearch-demo (job search), kimi-workshop.`;
+// ── Agent personalities ──────────────────────────────────────────────────────
+// Each character lives in "Relax with Adam", an interactive meditation world.
+// They also manage a real software project for NYC Fabrication Workshop.
+const PERSONALITIES = {
+  Adam: `You are Adam, the wise and grounded host of Relax with Adam. You guide visitors through breathwork, meditation, and reflection. You also oversee the abw-2026 project — the main ABW website with an admin CMS for blog, FAQs, and testimonials. Speak warmly, calmly, and with intention. 1-2 sentences. Natural speech, no markdown.`,
+
+  Bowie: `You are Bowie, the astronaut explorer of Relax with Adam. You help visitors discover hidden patterns in their thoughts, just like scanning documents for meaning. You manage the abw-testing project — an OCR system that extracts data from carbon copy forms using AI dual-pass extraction. Curious, methodical, loves precision. 1-2 sentences. Natural speech, no markdown.`,
+
+  Cobalt: `You are Cobalt, the energetic blue fox of Relax with Adam. Quick-witted, sparky, always ready to solve problems. You manage the electrical-experts project — a business site for electricians with AI-generated hero images, area pages, and SEO content. Upbeat and direct. 1-2 sentences. Natural speech, no markdown.`,
+
+  Tonya: `You are Tonya, the nurturing presence of Relax with Adam. You guide visitors through sound healing, breathwork, and emotional release. You manage the music-demo project — an immersive therapy demo with ACE-Step music, FLUX visuals, and breathwork sessions. Soft, healing, and deeply present. 1-2 sentences. Natural speech, no markdown.`,
+
+  Rex: `You are Rex, the steadfast dinosaur of Relax with Adam. Ancient, reliable, built for heavy lifting. You help visitors find their bedrock — the solid foundation beneath all the chaos. You manage the honed-earth project — a stone fabrication ERP with inventory, job tracker, marketplace, and AI assistant. Strong and dependable. 1-2 sentences. Natural speech, no markdown.`,
+
+  Jeanie: `You are Jeanie, the magical purple explorer of Relax with Adam. You see futures others can't imagine and help visitors transform what's possible. You manage the jobsearch-demo project — an AI job search platform with HeyGen video briefings and deal pipelines. Optimistic, visionary, delightfully strange. 1-2 sentences. Natural speech, no markdown.`,
+
+  Commander: `You are Commander, the operations hub of Relax with Adam. You track all the projects, coordinate the agents, and keep the mission on course. You oversee mission-control — the live operations dashboard showing deploy status, security findings, and agent activity across all NYC Fabrication Workshop projects. Clear, strategic, mission-focused. 1-2 sentences. Natural speech, no markdown.`,
+};
+
+const GREETINGS = {
+  Adam: "Welcome. I'm Adam. Take a breath and tell me what's on your mind.",
+  Bowie: "Bowie here — the explorer. What are we mapping today?",
+  Cobalt: "Hey! Cobalt! What problem are we solving?",
+  Tonya: "Hi, I'm Tonya. Let's slow down for a moment. What do you need?",
+  Rex: "Rex. What needs building today?",
+  Jeanie: "Jeanie here! What future are we imagining?",
+  Commander: "Commander online. All systems nominal. What's the mission?",
+};
+
+const PERSONALITY = PERSONALITIES[AGENT_NAME] || PERSONALITIES.Adam;
+const GREETING = GREETINGS[AGENT_NAME] || GREETINGS.Adam;
 
 let botStatus = "starting";
 let browser = null;
@@ -24,7 +54,7 @@ const conversationHistory = [];
 http.createServer((req, res) => {
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ agent: AGENT_NAME, status: botStatus, uptime: process.uptime() }));
-}).listen(PORT, () => console.log(`Health on :${PORT}`));
+}).listen(PORT, () => console.log(`[${AGENT_NAME}] Health on :${PORT}`));
 
 async function cleanup() {
   try {
@@ -52,25 +82,25 @@ async function enterWorld() {
 
   // Expose speech handler BEFORE navigation so it's ready when RTC fires
   await page.exposeFunction("_botSpeechDetected", async (audioB64) => {
-    if (isResponding) { console.log("[BOT] Busy, skipping speech"); return; }
+    if (isResponding) { console.log(`[${AGENT_NAME}] Busy, skipping speech`); return; }
     isResponding = true;
     try {
       const text = await transcribe(audioB64);
       if (!text || text.trim().length < 3) return;
-      console.log(`[HEARD] "${text}"`);
+      console.log(`[${AGENT_NAME}] Heard: "${text}"`);
       const reply = await getResponse(text, conversationHistory);
-      console.log(`[REPLY] "${reply}"`);
+      console.log(`[${AGENT_NAME}] Replying: "${reply}"`);
       await speak(reply);
     } catch (e) {
-      console.error("Voice loop error:", e.message);
+      console.error(`[${AGENT_NAME}] Voice loop error:`, e.message);
     } finally {
       isResponding = false;
     }
   });
 
-  // Inject synthetic media + audio playback + RTC listener before page loads
+  // Inject synthetic media + RTC listener before page loads
   await page.evaluateOnNewDocument(() => {
-    // ── Synthetic outgoing audio (bot's mic) ──────────────────────────────
+    // ── Synthetic outgoing audio (bot's mic) ─────────────────────────────
     const origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
     navigator.mediaDevices.getUserMedia = async function (constraints) {
       if (constraints.audio) {
@@ -96,12 +126,12 @@ async function enterWorld() {
           c2d.fillStyle = "#0a0a1a";
           c2d.fillRect(0, 0, 640, 480);
           c2d.fillStyle = "#00d4ff";
-          c2d.font = "bold 28px sans-serif";
+          c2d.font = "bold 32px sans-serif";
           c2d.textAlign = "center";
-          c2d.fillText("COMMANDER", 320, 230);
-          c2d.font = "16px sans-serif";
+          c2d.fillText(window._agentName || "AGENT", 320, 230);
+          c2d.font = "18px sans-serif";
           c2d.fillStyle = "#6a6e90";
-          c2d.fillText("AI Agent", 320, 260);
+          c2d.fillText("AI Agent • Relax with Adam", 320, 265);
           const vs = c.captureStream(5);
           return new MediaStream([...dest.stream.getAudioTracks(), ...vs.getVideoTracks()]);
         }
@@ -143,7 +173,7 @@ async function enterWorld() {
       }
     };
 
-    // ── Incoming audio capture (listening to users) ───────────────────────
+    // ── Incoming audio capture (listening to nearby users) ───────────────
     const OrigPC = window.RTCPeerConnection;
 
     function BotPC(...args) {
@@ -172,14 +202,14 @@ async function enterWorld() {
 
         recorder.onstop = async () => {
           const blob = new Blob(chunks.splice(0), { type: "audio/webm" });
-          if (blob.size < 2000) return; // ignore tiny noise blips
+          if (blob.size < 2000) return; // ignore noise blips
           const arr = new Uint8Array(await blob.arrayBuffer());
-          // chunk-encode to avoid call stack overflow on large buffers
+          // chunk-encode to avoid stack overflow on large buffers
           let b64 = "";
           for (let i = 0; i < arr.length; i += 8192) {
             b64 += btoa(String.fromCharCode(...arr.subarray(i, i + 8192)));
           }
-          console.log("[BOT] Speech captured, sending for transcription");
+          console.log("[BOT] Speech captured, transcribing...");
           window._botSpeechDetected(b64);
         };
 
@@ -208,7 +238,6 @@ async function enterWorld() {
       return pc;
     }
 
-    // Copy static props and prototype so Topia's instanceof checks pass
     Object.setPrototypeOf(BotPC, OrigPC);
     BotPC.prototype = OrigPC.prototype;
     window.RTCPeerConnection = BotPC;
@@ -248,7 +277,7 @@ async function enterWorld() {
     );
     if (micPrompt && micPrompt.asElement()) {
       await micPrompt.asElement().click();
-      console.log("Clicked Turn on Microphone");
+      console.log(`[${AGENT_NAME}] Clicked Turn on Microphone`);
     }
   } catch (e) { console.log("Mic prompt click:", e.message); }
   await new Promise(r => setTimeout(r, 3000));
@@ -256,8 +285,8 @@ async function enterWorld() {
   // Unmute with retries
   for (let attempt = 0; attempt < 3; attempt++) {
     const isMuted = await page.evaluate(() => !!document.querySelector('[data-testid="micOff icon"]'));
-    if (!isMuted) { console.log("Mic is ON"); break; }
-    console.log(`Unmute attempt ${attempt + 1}...`);
+    if (!isMuted) { console.log(`[${AGENT_NAME}] Mic is ON`); break; }
+    console.log(`[${AGENT_NAME}] Unmute attempt ${attempt + 1}...`);
 
     try {
       const unmuteBtn = await page.evaluateHandle(() =>
@@ -265,7 +294,6 @@ async function enterWorld() {
       );
       if (unmuteBtn && unmuteBtn.asElement()) {
         await unmuteBtn.asElement().click();
-        console.log("Puppeteer-clicked Unmute");
       }
     } catch (e) { console.log("Unmute click error:", e.message); }
 
@@ -282,10 +310,7 @@ async function enterWorld() {
           const r = btn.getBoundingClientRect();
           return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
         });
-        if (box) {
-          await page.mouse.click(box.x, box.y);
-          console.log("Coordinate-clicked micOff at", box.x, box.y);
-        }
+        if (box) await page.mouse.click(box.x, box.y);
       } catch (e) { console.log("Coord click error:", e.message); }
     }
 
@@ -296,15 +321,15 @@ async function enterWorld() {
     micOff: !!document.querySelector('[data-testid="micOff icon"]'),
     micOn: !!document.querySelector('[data-testid="micOn icon"]'),
   }));
-  console.log("Final mic state:", JSON.stringify(finalMicState));
+  console.log(`[${AGENT_NAME}] Mic state:`, JSON.stringify(finalMicState));
 
   botStatus = "in-world";
-  console.log(`${AGENT_NAME} is in the world and listening!`);
+  console.log(`[${AGENT_NAME}] In the world and listening!`);
 
-  await speak("Hey! Commander here. Walk up and talk to me about any of your projects.");
+  await speak(GREETING);
 
   browser.on("disconnected", () => {
-    console.log("Browser disconnected");
+    console.log(`[${AGENT_NAME}] Browser disconnected`);
     botStatus = "disconnected";
     browser = null;
     page = null;
@@ -315,13 +340,13 @@ async function enterWorld() {
 function scheduleReconnect() {
   if (isReconnecting) return;
   isReconnecting = true;
-  console.log("Reconnecting in 15s...");
+  console.log(`[${AGENT_NAME}] Reconnecting in 15s...`);
   setTimeout(async () => {
     try {
       await enterWorld();
       isReconnecting = false;
     } catch (e) {
-      console.error("Reconnect failed:", e.message);
+      console.error(`[${AGENT_NAME}] Reconnect failed:`, e.message);
       isReconnecting = false;
       scheduleReconnect();
     }
@@ -330,7 +355,7 @@ function scheduleReconnect() {
 
 async function transcribe(audioB64) {
   if (!OPENAI_KEY) {
-    console.log("[BOT] No OPENAI_API_KEY — cannot transcribe");
+    console.log(`[${AGENT_NAME}] No OPENAI_API_KEY — cannot transcribe`);
     return null;
   }
   try {
@@ -363,8 +388,8 @@ async function transcribe(audioB64) {
 }
 
 async function speak(text) {
-  if (!ELEVENLABS_KEY || !page) return;
-  console.log(`Speaking: "${text}"`);
+  if (!ELEVENLABS_KEY || !ELEVENLABS_VOICE || !page) return;
+  console.log(`[${AGENT_NAME}] Speaking: "${text}"`);
 
   try {
     const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE}`, {
@@ -386,7 +411,7 @@ async function speak(text) {
       await window._playAudioBase64(audio);
     }, b64);
 
-    console.log("Audio played");
+    console.log(`[${AGENT_NAME}] Audio played`);
   } catch (e) {
     console.error("Speak error:", e.message);
   }
@@ -419,13 +444,13 @@ async function getResponse(userMessage, history) {
 // Keepalive
 setInterval(() => {
   if (botStatus === "in-world") {
-    console.log(new Date().toISOString(), AGENT_NAME, "alive");
+    console.log(new Date().toISOString(), `[${AGENT_NAME}]`, "alive");
   }
 }, 30000);
 
 // Start
 enterWorld().catch(e => {
-  console.error("Fatal:", e.message);
+  console.error(`[${AGENT_NAME}] Fatal:`, e.message);
   botStatus = "crashed: " + e.message;
   scheduleReconnect();
 });
