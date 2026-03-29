@@ -43,11 +43,26 @@ const GREETINGS = {
 const PERSONALITY = PERSONALITIES[AGENT_NAME] || PERSONALITIES.Adam;
 const GREETING = GREETINGS[AGENT_NAME] || GREETINGS.Adam;
 
+// ── Spatial zones: each agent gets a starting offset + wander area ────────────
+// After entering the world, each bot arrow-key-walks to their zone.
+// Then they wander within a small radius so conversations don't overlap.
+const ZONES = {
+  Adam:      { dx:   0, dy:   0 },   // center — the host
+  Bowie:     { dx: -12, dy:  -6 },   // upper-left
+  Cobalt:    { dx:  12, dy:  -6 },   // upper-right
+  Tonya:     { dx: -12, dy:   6 },   // lower-left
+  Rex:       { dx:   0, dy:  10 },   // bottom-center
+  Jeanie:    { dx:  12, dy:   6 },   // lower-right
+  Commander: { dx: -18, dy:   0 },   // far-left
+};
+const ZONE = ZONES[AGENT_NAME] || { dx: 0, dy: 0 };
+
 let botStatus = "starting";
 let browser = null;
 let page = null;
 let isReconnecting = false;
 let isResponding = false;
+let isMoving = false;
 const conversationHistory = [];
 
 // Health server
@@ -254,7 +269,7 @@ async function enterWorld() {
                 active = false;
                 try { recorder.stop(); } catch {}
               }
-            }, 1500);
+            }, 1000); // 1s silence = end of speech (faster response)
           }
           setTimeout(tick, 80);
         }
@@ -386,7 +401,13 @@ async function enterWorld() {
   botStatus = "in-world";
   console.log(`[${AGENT_NAME}] In the world and listening!`);
 
+  // Walk to assigned zone
+  await walkToZone();
+
   await speak(GREETING);
+
+  // Start wandering
+  startWandering();
 
   browser.on("disconnected", () => {
     console.log(`[${AGENT_NAME}] Browser disconnected`);
@@ -395,6 +416,74 @@ async function enterWorld() {
     page = null;
     if (!isReconnecting) scheduleReconnect();
   });
+}
+
+// Walk to the agent's designated zone using arrow keys
+async function walkToZone() {
+  if (!page) return;
+  const { dx, dy } = ZONE;
+  console.log(`[${AGENT_NAME}] Walking to zone (dx=${dx}, dy=${dy})...`);
+
+  // Horizontal
+  const hKey = dx > 0 ? "ArrowRight" : "ArrowLeft";
+  for (let i = 0; i < Math.abs(dx); i++) {
+    await page.keyboard.press(hKey);
+    await new Promise(r => setTimeout(r, 200));
+  }
+  // Vertical
+  const vKey = dy > 0 ? "ArrowDown" : "ArrowUp";
+  for (let i = 0; i < Math.abs(dy); i++) {
+    await page.keyboard.press(vKey);
+    await new Promise(r => setTimeout(r, 200));
+  }
+  console.log(`[${AGENT_NAME}] Arrived at zone`);
+}
+
+// Wander in small random patterns — stop while speaking
+function startWandering() {
+  const DIRECTIONS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+
+  async function wander() {
+    if (!page || botStatus !== "in-world") return;
+    if (isResponding || isMoving) return; // don't move while talking
+
+    isMoving = true;
+    try {
+      // Random walk: 1-3 steps in a random direction
+      const dir = DIRECTIONS[Math.floor(Math.random() * 4)];
+      const steps = 1 + Math.floor(Math.random() * 3);
+      for (let i = 0; i < steps; i++) {
+        if (isResponding) break; // freeze if someone starts talking
+        await page.keyboard.press(dir);
+        await new Promise(r => setTimeout(r, 250));
+      }
+
+      // Sometimes do a second direction for diagonal movement
+      if (Math.random() > 0.5 && !isResponding) {
+        const dir2 = DIRECTIONS[Math.floor(Math.random() * 4)];
+        const steps2 = 1 + Math.floor(Math.random() * 2);
+        for (let i = 0; i < steps2; i++) {
+          if (isResponding) break;
+          await page.keyboard.press(dir2);
+          await new Promise(r => setTimeout(r, 250));
+        }
+      }
+    } catch (e) {
+      console.log(`[${AGENT_NAME}] Wander error:`, e.message);
+    }
+    isMoving = false;
+  }
+
+  // Wander every 15-45 seconds
+  function scheduleNext() {
+    const delay = 15000 + Math.floor(Math.random() * 30000);
+    setTimeout(async () => {
+      await wander();
+      if (botStatus === "in-world") scheduleNext();
+    }, delay);
+  }
+  scheduleNext();
+  console.log(`[${AGENT_NAME}] Wandering started`);
 }
 
 function scheduleReconnect() {
@@ -452,13 +541,13 @@ async function speak(text) {
   console.log(`[${AGENT_NAME}] Speaking: "${text}"`);
 
   try {
-    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE}`, {
+    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE}?optimize_streaming_latency=4`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "xi-api-key": ELEVENLABS_KEY },
       body: JSON.stringify({
         text,
         model_id: "eleven_turbo_v2_5",
-        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+        voice_settings: { stability: 0.4, similarity_boost: 0.7 },
       }),
     });
 
@@ -489,8 +578,8 @@ async function getResponse(userMessage, history) {
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 150,
+      model: "claude-3-5-haiku-20241022",
+      max_tokens: 100,
       system: PERSONALITY,
       messages: history.slice(-10),
     }),
