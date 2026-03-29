@@ -5,6 +5,7 @@ const BROWSERLESS_TOKEN = process.env.BROWSERLESS_TOKEN || "";
 const WORLD_URL = process.env.TOPIA_WORLD_URL || "https://topia.io/relaxwithadam";
 const WORLD_PASSWORD = process.env.TOPIA_WORLD_PASSWORD || "breathe";
 const AGENT_NAME = process.env.AGENT_NAME || "Adam";
+const DISPLAY_NAME = process.env.DISPLAY_NAME || AGENT_NAME;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
 const ELEVENLABS_KEY = process.env.ELEVENLABS_API_KEY || "";
 const ELEVENLABS_VOICE = process.env.ELEVENLABS_VOICE_ID || "";
@@ -75,7 +76,7 @@ const GREETING = GREETINGS[AGENT_NAME] || GREETINGS.Adam;
 // ── Avatar mapping (from Topia's "Avatar selection" picker) ──────────────────
 // Alt text match + index fallback (grid order: Butterfly=0, Default=1, Original=2, Astronaut=3, Dinosaur=4, Fox=5, Pumpkin=6)
 const AVATAR_KEYWORD = {
-  Adam: "Original",
+  Adam: "Spine Avatar",
   Bowie: "Astronaut",
   Cobalt: "Fox",
   Tonya: "Pumpkin",
@@ -83,7 +84,7 @@ const AVATAR_KEYWORD = {
   Jeanie: "Butterfly",
 };
 const AVATAR_INDEX = {
-  Adam: 2,
+  Adam: 1,
   Bowie: 3,
   Cobalt: 5,
   Tonya: 6,
@@ -470,7 +471,7 @@ async function enterWorld() {
     await page.keyboard.down("Control");
     await page.keyboard.press("a");
     await page.keyboard.up("Control");
-    await page.keyboard.type(AGENT_NAME, { delay: 20 });
+    await page.keyboard.type(DISPLAY_NAME, { delay: 20 });
     await page.evaluate(() => document.getElementById("password").focus());
     await page.keyboard.type(WORLD_PASSWORD, { delay: 20 });
     await new Promise(r => setTimeout(r, 500));
