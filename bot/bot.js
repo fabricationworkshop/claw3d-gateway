@@ -196,30 +196,80 @@ async function enterWorld() {
     browserWSEndpoint: `wss://chrome.browserless.io?token=${BROWSERLESS_TOKEN}`,
   });
 
-  // ── TalkingHead avatar DISABLED — was blocking bots from entering ──
-  // TODO: Re-enable once hosting is solved (jsdelivr caching, rawgithack interstitial, etc.)
-  // For now, bots use the static canvas overlay for video.
-  if (false) { // DISABLED
+  // ── TalkingHead avatar in a separate tab ───────────────────────────
+  // Navigate to a real origin first, then inject the avatar code via addScriptTag
   avatarPage = await browser.newPage();
   await avatarPage.setViewport({ width: 640, height: 480 });
   try {
-    const avatarUrl = `https://cdn.jsdelivr.net/gh/fabricationworkshop/claw3d-gateway@master/bot/avatar.html?agent=${AGENT_NAME}`;
-    console.log(`[${AGENT_NAME}] Loading avatar from jsdelivr`);
-    await avatarPage.goto(avatarUrl, { waitUntil: "networkidle2", timeout: 45000 });
+    // Navigate to a minimal real page (needed for ES module imports to work)
+    await avatarPage.goto("https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.min.js", {
+      waitUntil: "domcontentloaded", timeout: 15000,
+    });
+    // Clear the page and set up our avatar container
+    await avatarPage.evaluate(() => {
+      document.open();
+      document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>body{margin:0;overflow:hidden;background:#0a0a1a}#avatar{width:640px;height:480px}</style>
+</head><body><div id="avatar"></div></body></html>`);
+      document.close();
+    });
+
+    // Inject the avatar module script
+    const agentForAvatar = AGENT_NAME;
+    await avatarPage.addScriptTag({
+      type: "module",
+      content: `
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js/+esm";
+// Patch renderer for preserveDrawingBuffer
+const OrigR = THREE.WebGLRenderer;
+THREE.WebGLRenderer = function(p={}) { p.preserveDrawingBuffer=true; return new OrigR(p); };
+THREE.WebGLRenderer.prototype = OrigR.prototype;
+
+const { TalkingHead } = await import("https://cdn.jsdelivr.net/gh/met4citizen/TalkingHead@1.7/modules/talkinghead.mjs");
+
+const CONFIGS = {
+  Adam:{mood:"neutral",view:"upper",body:"M"}, Bowie:{mood:"happy",view:"upper",body:"M"},
+  Cobalt:{mood:"happy",view:"upper",body:"M"}, Tonya:{mood:"neutral",view:"upper",body:"F"},
+  Rex:{mood:"neutral",view:"upper",body:"M"}, Jeanie:{mood:"happy",view:"upper",body:"F"},
+  Louie:{mood:"neutral",view:"upper",body:"M"}, Sunny:{mood:"happy",view:"upper",body:"F"},
+  Mocha:{mood:"neutral",view:"upper",body:"F"}, Molly:{mood:"happy",view:"upper",body:"F"},
+};
+const cfg = CONFIGS["${agentForAvatar}"] || CONFIGS.Adam;
+
+try {
+  const head = new TalkingHead(document.getElementById("avatar"), {
+    modelFPS: 24, cameraView: cfg.view, lipsyncModules: ["en"],
+  });
+  await head.showAvatar({
+    url: "https://cdn.jsdelivr.net/gh/met4citizen/TalkingHead@1.7/avatars/brunette.glb",
+    body: cfg.body, avatarMood: cfg.mood, lipsyncLang: "en",
+  });
+  window.head = head;
+  window.avatarReady = true;
+  window.getFrame = () => head.renderer?.domElement?.toDataURL("image/jpeg", 0.6) || null;
+  window.speakWithAvatar = async (b64) => {
+    const bin = atob(b64), bytes = new Uint8Array(bin.length);
+    for (let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+    const buf = await head.audioCtx.decodeAudioData(bytes.buffer.slice(0));
+    await head.speakAudio({ audio: buf });
+  };
+  console.log("[Avatar] Ready");
+} catch(e) {
+  console.error("[Avatar] Error:", e);
+  window.avatarReady = false;
+  window._avatarError = e.message;
+}
+      `,
+    });
+
+    // Wait for avatar to load (up to 30s)
     await avatarPage.waitForFunction("window.avatarReady === true", { timeout: 30000 });
     console.log(`[${AGENT_NAME}] TalkingHead avatar loaded!`);
   } catch (e) {
-    console.log(`[${AGENT_NAME}] Avatar failed: ${e.message}`);
-    try {
-      const errors = await avatarPage.evaluate(() => {
-        return window._avatarError || document.body?.innerText?.substring(0, 200) || "no info";
-      });
-      console.log(`[${AGENT_NAME}] Avatar page state: ${errors}`);
-    } catch {}
+    console.log(`[${AGENT_NAME}] Avatar failed: ${e.message} — using static fallback`);
     await avatarPage.close().catch(() => {});
     avatarPage = null;
   }
-  } // end if(false) — avatar disabled
 
   // ── Open Topia page ─────────────────────────────────────────────────
   page = await browser.newPage();
