@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; overflow: hidden; background: #0a0a1a; }
+  #avatar { width: 640px; height: 480px; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js/+esm",
+    "three/examples/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+    "talkinghead": "https://cdn.jsdelivr.net/gh/met4citizen/TalkingHead@1.7/modules/talkinghead.mjs"
+  }
+}
+</script>
+</head>
+<body>
+<div id="avatar"></div>
+<script type="module">
+import { TalkingHead } from "talkinghead";
+
+const container = document.getElementById("avatar");
+
+// Get agent config from URL params
+const params = new URLSearchParams(window.location.search);
+const agentName = params.get("agent") || "Adam";
+
+// Avatar URLs — using included demo avatar as base, different mood/view per character
+const AVATAR_CONFIG = {
+  Adam:   { mood: "neutral",  view: "upper", body: "M" },
+  Bowie:  { mood: "happy",    view: "upper", body: "M" },
+  Cobalt: { mood: "happy",    view: "upper", body: "M" },
+  Tonya:  { mood: "neutral",  view: "upper", body: "F" },
+  Rex:    { mood: "neutral",  view: "upper", body: "M" },
+  Jeanie: { mood: "happy",    view: "upper", body: "F" },
+};
+
+const config = AVATAR_CONFIG[agentName] || AVATAR_CONFIG.Adam;
+
+try {
+  const head = new TalkingHead(container, {
+    modelFPS: 30,
+    cameraView: config.view,
+    lipsyncModules: ["en"],
+  });
+
+  // Use the included demo avatar (we can swap to custom GLBs later)
+  await head.showAvatar({
+    url: "https://cdn.jsdelivr.net/gh/met4citizen/TalkingHead@1.7/avatars/brunette.glb",
+    body: config.body,
+    avatarMood: config.mood,
+    lipsyncLang: "en",
+  });
+
+  console.log(`[Avatar] ${agentName} avatar loaded`);
+
+  // Expose for Puppeteer control
+  window.head = head;
+  window.avatarReady = true;
+
+  // Canvas capture for WebRTC
+  const canvas = head.renderer.domElement;
+  window.avatarVideoStream = canvas.captureStream(30);
+
+  // Audio output capture
+  const audioDest = head.audioCtx.createMediaStreamDestination();
+  head.audioSpeechGainNode.connect(audioDest);
+  window.avatarAudioStream = audioDest.stream;
+
+  // Combined MediaStream ready for WebRTC injection
+  window.avatarMediaStream = new MediaStream([
+    ...window.avatarVideoStream.getVideoTracks(),
+    ...window.avatarAudioStream.getAudioTracks(),
+  ]);
+
+  // Function for Puppeteer to call to make the avatar speak
+  // Uses TalkingHead's built-in lip sync from audio
+  window.speakWithAvatar = async function(audioBase64) {
+    const binary = atob(audioBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const audioBuffer = await head.audioCtx.decodeAudioData(bytes.buffer.slice(0));
+    await head.speakAudio({ audio: audioBuffer });
+  };
+
+  // Streaming speak function for lower latency
+  window.startAvatarStream = function(sampleRate) {
+    head.streamStart({
+      sampleRate: sampleRate || 22050,
+      lipsyncType: "visemes",
+      waitForAudioChunks: true,
+    });
+  };
+
+  window.feedAvatarAudio = function(pcmBase64) {
+    const raw = atob(pcmBase64);
+    const buf = new ArrayBuffer(raw.length);
+    const view = new Uint8Array(buf);
+    for (let i = 0; i < raw.length; i++) view[i] = raw.charCodeAt(i);
+    head.streamAudio(buf);
+  };
+
+  window.endAvatarStream = function() {
+    head.streamNotifyEnd();
+  };
+
+  // Idle animations — random blinks, head tilts
+  setInterval(() => {
+    if (Math.random() < 0.3) {
+      head.setMood(config.mood);
+    }
+  }, 5000);
+
+  console.log("[Avatar] Ready — streams available");
+
+} catch (e) {
+  console.error("[Avatar] Init error:", e);
+  window.avatarReady = false;
+}
+</script>
+</body>
+</html>

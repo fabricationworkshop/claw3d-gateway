@@ -100,8 +100,21 @@ let isResponding = false;
 let isMoving = false;
 const conversationHistory = [];
 
-// Health server
+// Health server + avatar page server
+const fs = require("fs");
+const path = require("path");
 http.createServer((req, res) => {
+  if (req.url?.startsWith("/avatar")) {
+    try {
+      const html = fs.readFileSync(path.join(__dirname, "avatar.html"), "utf-8");
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(html);
+    } catch {
+      res.writeHead(404);
+      res.end("avatar.html not found");
+    }
+    return;
+  }
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ agent: AGENT_NAME, status: botStatus, uptime: process.uptime() }));
 }).listen(PORT, () => console.log(`[${AGENT_NAME}] Health on :${PORT}`));
