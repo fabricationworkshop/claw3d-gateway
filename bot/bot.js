@@ -197,13 +197,12 @@ async function enterWorld() {
   });
 
   // ── Load TalkingHead avatar in a separate tab ───────────────────────
-  // Avatar page must be served from a real URL (not setContent) for ES module imports to work.
-  // We use raw.githack.com which serves GitHub files with correct content-type.
+  // Serve from jsdelivr CDN (no interstitial, correct MIME types, ES modules work)
   avatarPage = await browser.newPage();
   await avatarPage.setViewport({ width: 640, height: 480 });
   try {
-    const avatarUrl = `https://raw.githack.com/fabricationworkshop/claw3d-gateway/master/bot/avatar.html?agent=${AGENT_NAME}`;
-    console.log(`[${AGENT_NAME}] Loading avatar from: ${avatarUrl}`);
+    const avatarUrl = `https://cdn.jsdelivr.net/gh/fabricationworkshop/claw3d-gateway@master/bot/avatar.html?agent=${AGENT_NAME}`;
+    console.log(`[${AGENT_NAME}] Loading avatar from jsdelivr`);
     await avatarPage.goto(avatarUrl, { waitUntil: "networkidle2", timeout: 45000 });
     // Wait for TalkingHead to fully load
     await avatarPage.waitForFunction("window.avatarReady === true", { timeout: 30000 });
