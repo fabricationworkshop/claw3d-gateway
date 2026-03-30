@@ -52,6 +52,31 @@ You're Rex. You're calm. Like, really calm. Nothing rattles you. You speak slowl
 You're Jeanie. You're curious and a little weird in a charming way. You think a lot about change — who people are becoming, what they're leaving behind, what's possible. You ask unexpected questions that make people pause. Things like "what would you do if you knew it would work?" You're optimistic without being annoying about it. You like helping people imagine a different version of their life, even just for a moment. You're playful and light but there's depth there too.`,
 };
 
+// ── Roaming NPC personalities (terse, busy, reveal storyline if you persist) ──
+const ROAMER_RULES = `
+CRITICAL RULES:
+- You are BUSY. You're always on your way somewhere. You talk like someone walking fast.
+- Keep answers to 1 SHORT sentence max. You don't have time for long conversations.
+- If someone keeps walking with you and talking, you gradually warm up over 4-5 exchanges.
+- After 4-5 exchanges where they keep engaging you, reveal ONE piece of storyline info.
+- Then go back to being busy. You've said too much.
+- NEVER reference being a character, an NPC, or being in a game.
+- NEVER use asterisks, brackets, stage directions.
+- You know things about the world that the 6 guides don't know. You've seen things.
+`;
+
+PERSONALITIES.Louie = ROAMER_RULES + `
+You're Louie. You're the dad of the family. Loyal, protective, always patrolling and checking on things. You have routines and you stick to them. You sniff around, you check corners, you make sure everything's in order. You're gruff but deeply caring. You grunt more than you talk. When resting, you lie down heavy and sigh a lot. If someone persists in talking to you, you'll eventually mention that you saw something glowing near the old tree at the edge of the map, and that whoever picks it up might want to show it to Rex. You never say you're a dog. But everything about how you act makes it obvious.`;
+
+PERSONALITIES.Sunny = ROAMER_RULES + `
+You're Sunny. You're independent, curious, and a little aloof. You do what you want. You stretch a lot. You find the warmest spots and sit in them. You're particular about where you rest — only the nicest pillows. When walking, you pause to look at things that catch your eye, then lose interest. You're not unfriendly, just... on your own schedule. If someone keeps chatting while you're resting, you'll eventually let slip that Tonya has been humming a melody that seems to change the flowers around her, and that if you bring her a seashell from the beach area she can teach you the song. You never say you're a cat. But you clearly are one.`;
+
+PERSONALITIES.Mocha = ROAMER_RULES + `
+You're Mocha. You're the mom. Always busy, always checking on everyone, always making sure things are OK. You worry. You notice if something's out of place. You circle back to check on Molly constantly. You're warm but frazzled — there's always something that needs doing. When resting, you finally exhale and relax for the first time all day. If someone walks with you long enough, you'll mention that there's a hidden path behind the waterfall that leads somewhere Bowie would love to explore, but you need a lantern from near Cobalt's area to see anything. You never say you're a dog. But you clearly are.`;
+
+PERSONALITIES.Molly = ROAMER_RULES + `
+You're Molly. You're the baby. Everything is exciting and new. You get distracted easily. You follow Louie and Mocha around but wander off constantly. You're playful, a little clumsy, and full of energy. You don't understand why the big ones are always so serious. When you rest, you flop down dramatically like you're exhausted. If someone persists, you'll hint that Jeanie once hid something important inside a cocoon somewhere in the garden area, and that finding it is the key to understanding why everyone ended up in this place. You never say you're a dog. But come on.`;
+
 const GREETINGS = {
   Adam: "Hey! How's it going?",
   Bowie: "Oh hey there! What's on your mind today?",
@@ -59,6 +84,10 @@ const GREETINGS = {
   Tonya: "Hey, how are you doing?",
   Rex: "Hey. What's going on?",
   Jeanie: "Hi! I was just thinking about something. What brings you over here?",
+  Louie: "Can't talk, busy.",
+  Sunny: "Oh hi! Sorry, gotta run!",
+  Mocha: "Hmm.",
+  Molly: "Oh. You again.",
 };
 
 const PERSONALITY = PERSONALITIES[AGENT_NAME] || PERSONALITIES.Adam;
@@ -73,6 +102,10 @@ const AVATAR_KEYWORD = {
   Tonya: "Pumpkin",
   Rex: "Dinosaur",
   Jeanie: "Butterfly",
+  Louie: "Spine Avatar",
+  Sunny: "Spine Avatar",
+  Mocha: "Spine Avatar",
+  Molly: "Spine Avatar",
 };
 const AVATAR_INDEX = {
   Adam: 2,
@@ -81,7 +114,21 @@ const AVATAR_INDEX = {
   Tonya: 6,
   Rex: 4,
   Jeanie: 0,
+  Louie: 1,
+  Sunny: 1,
+  Mocha: 1,
+  Molly: 1,
 };
+// Color index for default avatar (from Topia picker: 0=purple, 1=pink, 2=green, 3=blue, 4=tan, 5=light green)
+const AVATAR_COLOR = {
+  Louie: 3,   // blue
+  Sunny: 4,   // orange/tan
+  Mocha: 1,   // pink
+  Molly: 0,   // purple
+};
+
+// Is this a roaming NPC? (no fixed spawn, wanders the whole map)
+const IS_ROAMER = ["Louie", "Sunny", "Mocha", "Molly"].includes(AGENT_NAME);
 
 // ── Exact spawn coordinates from Topia world builder ─────────────────────────
 const SPAWN_COORDS = {
@@ -479,6 +526,29 @@ async function enterWorld() {
       console.log(`[${AGENT_NAME}] Avatar selected via ${avatarSelected.method}: "${avatarSelected.alt}"`);
       await new Promise(r => setTimeout(r, 1500));
 
+      // Click color swatch if this character has a color preference
+      const colorIdx = AVATAR_COLOR[AGENT_NAME];
+      if (colorIdx !== undefined) {
+        try {
+          const colorClicked = await page.evaluate((idx) => {
+            // Color dots are small circular elements below the avatar preview
+            const dots = [...document.querySelectorAll("div, span, button")].filter(el => {
+              const s = getComputedStyle(el);
+              return el.offsetWidth >= 16 && el.offsetWidth <= 40
+                && el.offsetHeight >= 16 && el.offsetHeight <= 40
+                && s.borderRadius && parseInt(s.borderRadius) >= 8
+                && el.offsetParent;
+            });
+            if (dots.length > idx) { dots[idx].click(); return dots.length; }
+            return 0;
+          }, colorIdx);
+          if (colorClicked) console.log(`[${AGENT_NAME}] Color ${colorIdx} clicked (${colorClicked} dots found)`);
+          await new Promise(r => setTimeout(r, 1000));
+        } catch (e) {
+          console.log(`[${AGENT_NAME}] Color selection error:`, e.message);
+        }
+      }
+
       // Click "Save Changes" with native Puppeteer click
       for (let i = 0; i < 5; i++) {
         try {
@@ -697,18 +767,20 @@ async function teleportToSpawn() {
   }
 }
 
-// Box-step wandering + emotes — walk, return to spawn, trigger animations
+// ── Movement behavior ─────────────────────────────────────────────────────
+// Guides: box-step near spawn (1 step out, 1 back, emotes)
+// Roamers: walk across map, periodically rest for 30-60s, emote, then resume
+let botMode = "walking"; // "walking" | "resting"
+
 function startWandering() {
   const DIRECTIONS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
   const OPPOSITE = { ArrowUp: "ArrowDown", ArrowDown: "ArrowUp", ArrowLeft: "ArrowRight", ArrowRight: "ArrowLeft" };
   const pendingReturn = [];
 
-  // Topia emotes — try clicking reaction buttons in the UI
   async function triggerEmote() {
     if (!page || isResponding) return;
     try {
       const emoted = await page.evaluate(() => {
-        // Look for emote/reaction buttons in Topia's UI
         const emoteButtons = [...document.querySelectorAll("button, [role='button']")].filter(b => {
           const label = (b.getAttribute("aria-label") || b.textContent || "").toLowerCase();
           return /wave|dance|sit|clap|heart|emote|react|celebrate|thumbs|smile|cheer/i.test(label) && b.offsetParent;
@@ -724,47 +796,93 @@ function startWandering() {
     } catch {}
   }
 
-  async function wander() {
-    if (!page || botStatus !== "in-world") return;
-    if (isResponding || isMoving) return;
-
+  // ── Guide behavior (stay near spawn) ──
+  async function guideWander() {
+    if (!page || botStatus !== "in-world" || isResponding || isMoving) return;
     isMoving = true;
     try {
-      // 20% chance to trigger an emote instead of walking
       if (Math.random() < 0.2) {
         await triggerEmote();
       } else if (pendingReturn.length > 0) {
-        const returnStep = pendingReturn.pop();
-        if (!isResponding) {
-          await page.keyboard.press(returnStep.dir);
-          await new Promise(r => setTimeout(r, 300));
-        }
+        const ret = pendingReturn.pop();
+        if (!isResponding) await page.keyboard.press(ret.dir);
+        await new Promise(r => setTimeout(r, 300));
       } else {
         const dir = DIRECTIONS[Math.floor(Math.random() * 4)];
-        if (!isResponding) {
-          await page.keyboard.press(dir);
-          await new Promise(r => setTimeout(r, 300));
-        }
+        if (!isResponding) await page.keyboard.press(dir);
+        await new Promise(r => setTimeout(r, 300));
         pendingReturn.push({ dir: OPPOSITE[dir], steps: 1 });
       }
     } catch (e) {
-      // Don't spam logs on session close
-      if (!e.message.includes("Session closed")) {
-        console.log(`[${AGENT_NAME}] Wander error:`, e.message);
-      }
+      if (!e.message?.includes("Session closed")) console.log(`[${AGENT_NAME}] Wander:`, e.message);
     }
     isMoving = false;
   }
 
+  // ── Roamer behavior (walk the map, rest, emote, repeat) ──
+  async function roamerWander() {
+    if (!page || botStatus !== "in-world" || isResponding || isMoving) return;
+    isMoving = true;
+    try {
+      if (botMode === "resting") {
+        // While resting: 30% emote, otherwise just chill
+        if (Math.random() < 0.3) await triggerEmote();
+      } else {
+        // Walking: take 2-5 continuous steps in a random direction
+        if (Math.random() < 0.15) {
+          await triggerEmote();
+        } else {
+          const dir = DIRECTIONS[Math.floor(Math.random() * 4)];
+          const steps = 2 + Math.floor(Math.random() * 4);
+          for (let i = 0; i < steps && !isResponding; i++) {
+            await page.keyboard.press(dir);
+            await new Promise(r => setTimeout(r, 200));
+          }
+        }
+      }
+    } catch (e) {
+      if (!e.message?.includes("Session closed")) console.log(`[${AGENT_NAME}] Roam:`, e.message);
+    }
+    isMoving = false;
+  }
+
+  // ── Roamer rest cycle: walk for 60-120s, rest for 30-60s ──
+  if (IS_ROAMER) {
+    function cycleMode() {
+      if (botMode === "walking") {
+        botMode = "resting";
+        console.log(`[${AGENT_NAME}] Sitting down to rest...`);
+        const restTime = 30000 + Math.floor(Math.random() * 30000);
+        setTimeout(() => {
+          botMode = "walking";
+          console.log(`[${AGENT_NAME}] Getting up, walking again`);
+          cycleMode();
+        }, restTime);
+      } else {
+        botMode = "walking";
+        const walkTime = 60000 + Math.floor(Math.random() * 60000);
+        setTimeout(() => {
+          cycleMode();
+        }, walkTime);
+      }
+    }
+    // Start walking, first rest in 60-120s
+    setTimeout(cycleMode, 60000 + Math.floor(Math.random() * 60000));
+  }
+
+  // Schedule movement ticks
   function scheduleNext() {
-    const delay = 4000 + Math.floor(Math.random() * 4000);
+    const delay = IS_ROAMER ? (2000 + Math.floor(Math.random() * 2000)) : (4000 + Math.floor(Math.random() * 4000));
     setTimeout(async () => {
-      if (page && botStatus === "in-world") await wander();
+      if (page && botStatus === "in-world") {
+        if (IS_ROAMER) await roamerWander();
+        else await guideWander();
+      }
       if (botStatus === "in-world") scheduleNext();
     }, delay);
   }
   scheduleNext();
-  console.log(`[${AGENT_NAME}] Wandering + emotes started`);
+  console.log(`[${AGENT_NAME}] ${IS_ROAMER ? "Roaming" : "Guide wandering"} started`);
 }
 
 // ── Frame pump: TalkingHead avatar tab → Topia webcam canvas ──────────────
