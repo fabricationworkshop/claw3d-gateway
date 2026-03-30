@@ -153,13 +153,17 @@ async function enterWorld() {
   avatarPage = await browser.newPage();
   await avatarPage.setViewport({ width: 640, height: 480 });
   try {
-    // Load avatar page from the bot's own health server
-    await avatarPage.goto(`http://localhost:${PORT}/avatar?agent=${AGENT_NAME}`, {
-      waitUntil: "networkidle2",
-      timeout: 30000,
-    });
+    // Read avatar.html and inject agent name, then load directly via setContent
+    // (can't use localhost because Browserless Chrome is on a different server)
+    let avatarHtml = fs.readFileSync(path.join(__dirname, "avatar.html"), "utf-8");
+    // Replace the URL param reader with a hardcoded agent name
+    avatarHtml = avatarHtml.replace(
+      'const agentName = params.get("agent") || "Adam";',
+      `const agentName = "${AGENT_NAME}";`
+    );
+    await avatarPage.setContent(avatarHtml, { waitUntil: "networkidle2", timeout: 30000 });
     // Wait for TalkingHead to fully load
-    await avatarPage.waitForFunction("window.avatarReady === true", { timeout: 25000 });
+    await avatarPage.waitForFunction("window.avatarReady === true", { timeout: 30000 });
     console.log(`[${AGENT_NAME}] TalkingHead avatar loaded`);
   } catch (e) {
     console.log(`[${AGENT_NAME}] Avatar failed to load: ${e.message} — using static fallback`);
