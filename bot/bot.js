@@ -196,20 +196,20 @@ async function enterWorld() {
     browserWSEndpoint: `wss://chrome.browserless.io?token=${BROWSERLESS_TOKEN}`,
   });
 
-  // ── Load TalkingHead avatar in a separate tab ───────────────────────
-  // Serve from jsdelivr CDN (no interstitial, correct MIME types, ES modules work)
+  // ── TalkingHead avatar DISABLED — was blocking bots from entering ──
+  // TODO: Re-enable once hosting is solved (jsdelivr caching, rawgithack interstitial, etc.)
+  // For now, bots use the static canvas overlay for video.
+  if (false) { // DISABLED
   avatarPage = await browser.newPage();
   await avatarPage.setViewport({ width: 640, height: 480 });
   try {
     const avatarUrl = `https://cdn.jsdelivr.net/gh/fabricationworkshop/claw3d-gateway@master/bot/avatar.html?agent=${AGENT_NAME}`;
     console.log(`[${AGENT_NAME}] Loading avatar from jsdelivr`);
     await avatarPage.goto(avatarUrl, { waitUntil: "networkidle2", timeout: 45000 });
-    // Wait for TalkingHead to fully load
     await avatarPage.waitForFunction("window.avatarReady === true", { timeout: 30000 });
     console.log(`[${AGENT_NAME}] TalkingHead avatar loaded!`);
   } catch (e) {
     console.log(`[${AGENT_NAME}] Avatar failed: ${e.message}`);
-    // Try to get console errors from the avatar page
     try {
       const errors = await avatarPage.evaluate(() => {
         return window._avatarError || document.body?.innerText?.substring(0, 200) || "no info";
@@ -219,6 +219,7 @@ async function enterWorld() {
     await avatarPage.close().catch(() => {});
     avatarPage = null;
   }
+  } // end if(false) — avatar disabled
 
   // ── Open Topia page ─────────────────────────────────────────────────
   page = await browser.newPage();
