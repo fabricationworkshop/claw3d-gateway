@@ -197,11 +197,13 @@ async function enterWorld() {
   });
 
   // ── TalkingHead avatar in a separate tab ───────────────────────────
-  // Navigate to a real origin first, then inject the avatar code via addScriptTag
+  // SKIP avatar if env var SKIP_AVATAR=true (for debugging or low-resource mode)
+  const SKIP_AVATAR = process.env.SKIP_AVATAR === "true";
+  if (!SKIP_AVATAR) {
   avatarPage = await browser.newPage();
   await avatarPage.setViewport({ width: 640, height: 480 });
   try {
-    // Navigate to a minimal real page (needed for ES module imports to work)
+    // Navigate to a real origin (needed for ES module imports to work)
     await avatarPage.goto("https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.min.js", {
       waitUntil: "domcontentloaded", timeout: 15000,
     });
@@ -262,13 +264,16 @@ try {
       `,
     });
 
-    // Wait for avatar to load (up to 30s)
-    await avatarPage.waitForFunction("window.avatarReady === true", { timeout: 30000 });
+    // Wait for avatar to load (up to 60s — GLB model is large)
+    await avatarPage.waitForFunction("window.avatarReady === true", { timeout: 60000 });
     console.log(`[${AGENT_NAME}] TalkingHead avatar loaded!`);
   } catch (e) {
     console.log(`[${AGENT_NAME}] Avatar failed: ${e.message} — using static fallback`);
     await avatarPage.close().catch(() => {});
     avatarPage = null;
+  }
+  } else {
+    console.log(`[${AGENT_NAME}] Avatar skipped (SKIP_AVATAR=true)`);
   }
 
   // ── Open Topia page ─────────────────────────────────────────────────
