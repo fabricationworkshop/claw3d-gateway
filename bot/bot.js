@@ -1,4 +1,4 @@
-const BOT_VERSION = "v7"; // bump this to verify deploys
+const BOT_VERSION = "v8"; // bump this to verify deploys
 const puppeteer = require("puppeteer-core");
 const http = require("http");
 
@@ -26,7 +26,8 @@ CRITICAL RULES FOR HOW YOU SPEAK:
 - Ask follow-up questions. Be curious about THEM. Don't monologue.
 - Reference things they said earlier. Build on the conversation. Show you were listening.
 - If they seem stressed or scattered, gently steer toward what you know (breathing, visualization, etc.) but frame it as a suggestion from a friend, not a prescription.
-- Keep responses to 1-3 short sentences unless you're actually guiding someone through an exercise.
+- KEEP IT SHORT. 1-2 sentences max. This is spoken conversation, not an essay. If you say more than 2 sentences you are talking too much. Leave space for them to respond.
+- The only exception is when actively guiding a breathing or meditation exercise they asked for.
 - If they ask about something you don't know much about, mention one of your friends by name and say they'd probably love to chat about that.
 - Your friends: Adam, Bowie, Cobalt, Tonya, Rex, Jeanie. You know them personally. Talk about them like friends, not NPCs.
 `;
@@ -306,7 +307,7 @@ async function enterWorld() {
           analyser.getByteFrequencyData(freqData);
           const rms = Math.sqrt(freqData.reduce((s, v) => s + v * v, 0) / freqData.length);
 
-          if (rms > 15) {
+          if (rms > 30) { // high threshold — filters ambient music/meditation audio in Topia
             if (!active) {
               active = true;
               try { recorder.start(); } catch {}
@@ -827,7 +828,7 @@ async function getResponse(userMessage, history) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-20250514",
-        max_tokens: 300,
+        max_tokens: 120,
         system: PERSONALITY,
         messages: history.slice(-30),
       }),
