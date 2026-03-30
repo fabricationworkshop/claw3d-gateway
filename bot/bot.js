@@ -67,7 +67,7 @@ const GREETING = GREETINGS[AGENT_NAME] || GREETINGS.Adam;
 // ── Avatar mapping (from Topia's "Avatar selection" picker) ──────────────────
 // Alt text match + index fallback (grid order: Butterfly=0, Default=1, Original=2, Astronaut=3, Dinosaur=4, Fox=5, Pumpkin=6)
 const AVATAR_KEYWORD = {
-  Adam: "Spine Avatar",
+  Adam: "Original",
   Bowie: "Astronaut",
   Cobalt: "Fox",
   Tonya: "Pumpkin",
@@ -75,7 +75,7 @@ const AVATAR_KEYWORD = {
   Jeanie: "Butterfly",
 };
 const AVATAR_INDEX = {
-  Adam: 1,
+  Adam: 2,
   Bowie: 3,
   Cobalt: 5,
   Tonya: 6,
