@@ -1,3 +1,4 @@
+const BOT_VERSION = "v7"; // bump this to verify deploys
 const puppeteer = require("puppeteer-core");
 const http = require("http");
 
@@ -136,7 +137,7 @@ async function cleanup() {
 async function enterWorld() {
   await cleanup();
 
-  console.log(`=== ${AGENT_NAME} connecting ===`);
+  console.log(`=== ${AGENT_NAME} ${BOT_VERSION} connecting ===`);
   botStatus = "connecting";
 
   browser = await puppeteer.connect({
@@ -256,10 +257,12 @@ async function enterWorld() {
 
     function BotPC(...args) {
       const pc = new OrigPC(...args);
+      console.log("[BOT] RTCPeerConnection created");
 
       pc.addEventListener("track", ({ track }) => {
+        console.log("[BOT] Got track:", track.kind, track.readyState, track.id);
         if (track.kind !== "audio") return;
-        console.log("[BOT] Got remote audio track — listening");
+        console.log("[BOT] Audio track captured — starting listener");
 
         const stream = new MediaStream([track]);
         const lctx = new AudioContext({ sampleRate: 48000 });
