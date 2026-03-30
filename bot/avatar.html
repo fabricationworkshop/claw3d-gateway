@@ -136,6 +136,7 @@ try {
 } catch (e) {
   console.error("[Avatar] Init error:", e);
   window.avatarReady = false;
+  window._avatarError = e.message + " | " + e.stack?.substring(0, 200);
 }
 </script>
 </body>

@@ -150,23 +150,26 @@ async function enterWorld() {
   });
 
   // ── Load TalkingHead avatar in a separate tab ───────────────────────
+  // Avatar page must be served from a real URL (not setContent) for ES module imports to work.
+  // We use raw.githack.com which serves GitHub files with correct content-type.
   avatarPage = await browser.newPage();
   await avatarPage.setViewport({ width: 640, height: 480 });
   try {
-    // Read avatar.html and inject agent name, then load directly via setContent
-    // (can't use localhost because Browserless Chrome is on a different server)
-    let avatarHtml = fs.readFileSync(path.join(__dirname, "avatar.html"), "utf-8");
-    // Replace the URL param reader with a hardcoded agent name
-    avatarHtml = avatarHtml.replace(
-      'const agentName = params.get("agent") || "Adam";',
-      `const agentName = "${AGENT_NAME}";`
-    );
-    await avatarPage.setContent(avatarHtml, { waitUntil: "networkidle2", timeout: 30000 });
+    const avatarUrl = `https://raw.githack.com/fabricationworkshop/claw3d-gateway/master/bot/avatar.html?agent=${AGENT_NAME}`;
+    console.log(`[${AGENT_NAME}] Loading avatar from: ${avatarUrl}`);
+    await avatarPage.goto(avatarUrl, { waitUntil: "networkidle2", timeout: 45000 });
     // Wait for TalkingHead to fully load
     await avatarPage.waitForFunction("window.avatarReady === true", { timeout: 30000 });
-    console.log(`[${AGENT_NAME}] TalkingHead avatar loaded`);
+    console.log(`[${AGENT_NAME}] TalkingHead avatar loaded!`);
   } catch (e) {
-    console.log(`[${AGENT_NAME}] Avatar failed to load: ${e.message} — using static fallback`);
+    console.log(`[${AGENT_NAME}] Avatar failed: ${e.message}`);
+    // Try to get console errors from the avatar page
+    try {
+      const errors = await avatarPage.evaluate(() => {
+        return window._avatarError || document.body?.innerText?.substring(0, 200) || "no info";
+      });
+      console.log(`[${AGENT_NAME}] Avatar page state: ${errors}`);
+    } catch {}
     await avatarPage.close().catch(() => {});
     avatarPage = null;
   }
