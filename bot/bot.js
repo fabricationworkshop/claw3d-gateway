@@ -97,6 +97,8 @@ const SPAWN = SPAWN_COORDS[AGENT_NAME] || { x: 0, y: 0 };
 let botStatus = "starting";
 let browser = null;
 let page = null;
+let avatarPage = null;
+let framePumpRunning = false;
 let isReconnecting = false;
 let isResponding = false;
 let isMoving = false;
@@ -122,11 +124,13 @@ http.createServer((req, res) => {
 }).listen(PORT, () => console.log(`[${AGENT_NAME}] Health on :${PORT}`));
 
 async function cleanup() {
+  framePumpRunning = false;
   try {
     if (browser) {
       await browser.close().catch(() => {});
       browser = null;
       page = null;
+      avatarPage = null;
     }
   } catch {}
 }
@@ -145,6 +149,25 @@ async function enterWorld() {
     browserWSEndpoint: `wss://chrome.browserless.io?token=${BROWSERLESS_TOKEN}`,
   });
 
+  // ── Load TalkingHead avatar in a separate tab ───────────────────────
+  avatarPage = await browser.newPage();
+  await avatarPage.setViewport({ width: 640, height: 480 });
+  try {
+    // Load avatar page from the bot's own health server
+    await avatarPage.goto(`http://localhost:${PORT}/avatar?agent=${AGENT_NAME}`, {
+      waitUntil: "networkidle2",
+      timeout: 30000,
+    });
+    // Wait for TalkingHead to fully load
+    await avatarPage.waitForFunction("window.avatarReady === true", { timeout: 25000 });
+    console.log(`[${AGENT_NAME}] TalkingHead avatar loaded`);
+  } catch (e) {
+    console.log(`[${AGENT_NAME}] Avatar failed to load: ${e.message} — using static fallback`);
+    await avatarPage.close().catch(() => {});
+    avatarPage = null;
+  }
+
+  // ── Open Topia page ─────────────────────────────────────────────────
   page = await browser.newPage();
   const ctx = browser.defaultBrowserContext();
   await ctx.overridePermissions("https://topia.io", ["microphone", "camera"]);
@@ -200,19 +223,26 @@ async function enterWorld() {
         window._botDest = dest;
 
         if (constraints.video) {
+          // Create canvas for webcam feed — will be painted by Puppeteer frame pump
           const c = document.createElement("canvas");
           c.width = 640; c.height = 480;
           const c2d = c.getContext("2d");
           c2d.fillStyle = "#0a0a1a";
           c2d.fillRect(0, 0, 640, 480);
           c2d.fillStyle = "#00d4ff";
-          c2d.font = "bold 32px sans-serif";
+          c2d.font = "bold 24px sans-serif";
           c2d.textAlign = "center";
-          c2d.fillText(window._agentName || "AGENT", 320, 230);
-          c2d.font = "18px sans-serif";
-          c2d.fillStyle = "#6a6e90";
-          c2d.fillText("AI Agent • Relax with Adam", 320, 265);
-          const vs = c.captureStream(5);
+          c2d.fillText("Loading avatar...", 320, 240);
+          // Expose canvas for frame pump to paint on
+          window._webcamCanvas = c;
+          window._webcamCtx = c2d;
+          // Function called by Puppeteer to draw avatar frames
+          window._drawAvatarFrame = function(dataUrl) {
+            const img = new Image();
+            img.onload = () => c2d.drawImage(img, 0, 0, 640, 480);
+            img.src = dataUrl;
+          };
+          const vs = c.captureStream(15);
           return new MediaStream([...dest.stream.getAudioTracks(), ...vs.getVideoTracks()]);
         }
         return dest.stream;
@@ -564,6 +594,9 @@ async function enterWorld() {
   botStatus = "in-world";
   console.log(`[${AGENT_NAME}] In the world and listening!`);
 
+  // Start avatar frame pump (TalkingHead → Topia webcam)
+  startFramePump();
+
   // Teleport to spawn position
   await teleportToSpawn();
 
@@ -727,6 +760,40 @@ function startWandering() {
   console.log(`[${AGENT_NAME}] Wandering + emotes started`);
 }
 
+// ── Frame pump: TalkingHead avatar tab → Topia webcam canvas ──────────────
+function startFramePump() {
+  if (!avatarPage) {
+    console.log(`[${AGENT_NAME}] No avatar page — skipping frame pump`);
+    return;
+  }
+  framePumpRunning = true;
+  console.log(`[${AGENT_NAME}] Frame pump started (avatar → webcam)`);
+
+  async function pump() {
+    while (framePumpRunning && page && avatarPage) {
+      try {
+        // Get frame from avatar canvas
+        const frame = await avatarPage.evaluate(() => window.getFrame?.());
+        if (frame && page) {
+          // Draw on Topia's webcam canvas
+          await page.evaluate((dataUrl) => {
+            window._drawAvatarFrame?.(dataUrl);
+          }, frame);
+        }
+      } catch (e) {
+        if (!e.message.includes("Session closed") && !e.message.includes("Target closed")) {
+          console.log(`[${AGENT_NAME}] Frame pump error:`, e.message);
+        }
+        break;
+      }
+      await new Promise(r => setTimeout(r, 100)); // ~10fps
+    }
+    framePumpRunning = false;
+    console.log(`[${AGENT_NAME}] Frame pump stopped`);
+  }
+  pump();
+}
+
 let reconnectAttempts = 0;
 function scheduleReconnect() {
   if (isReconnecting) return;
@@ -804,11 +871,19 @@ async function speak(text) {
     const buf = Buffer.from(await res.arrayBuffer());
     const b64 = buf.toString("base64");
 
+    // Send audio to avatar page for lip-sync (fire and forget)
+    if (avatarPage) {
+      avatarPage.evaluate(async (audio) => {
+        await window.speakWithAvatar?.(audio);
+      }, b64).catch(() => {});
+    }
+
+    // Play audio through Topia's WebRTC
     await page.evaluate(async (audio) => {
       await window._playAudioBase64(audio);
     }, b64);
 
-    console.log(`[${AGENT_NAME}] Audio played`);
+    console.log(`[${AGENT_NAME}] Audio played (with lip-sync)`);
   } catch (e) {
     console.error("Speak error:", e.message);
   }

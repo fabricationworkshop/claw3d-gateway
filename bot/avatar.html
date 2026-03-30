@@ -20,6 +20,16 @@
 <body>
 <div id="avatar"></div>
 <script type="module">
+// Patch WebGLRenderer to add preserveDrawingBuffer BEFORE TalkingHead loads
+// This is needed for canvas.toDataURL() to work with Three.js
+import * as THREE from "three";
+const OrigRenderer = THREE.WebGLRenderer;
+THREE.WebGLRenderer = function(params = {}) {
+  params.preserveDrawingBuffer = true;
+  return new OrigRenderer(params);
+};
+THREE.WebGLRenderer.prototype = OrigRenderer.prototype;
+
 import { TalkingHead } from "talkinghead";
 
 const container = document.getElementById("avatar");
@@ -114,7 +124,14 @@ try {
     }
   }, 5000);
 
-  console.log("[Avatar] Ready — streams available");
+  // Frame capture for Puppeteer bridge — returns JPEG base64 of current frame
+  window.getFrame = function() {
+    const c = head.renderer.domElement;
+    if (!c) return null;
+    return c.toDataURL("image/jpeg", 0.65);
+  };
+
+  console.log("[Avatar] Ready — streams + frame capture available");
 
 } catch (e) {
   console.error("[Avatar] Init error:", e);
