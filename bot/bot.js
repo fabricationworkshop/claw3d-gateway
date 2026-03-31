@@ -197,8 +197,8 @@ async function enterWorld() {
   });
 
   // ── TalkingHead avatar in a separate tab ───────────────────────────
-  // SKIP avatar if env var SKIP_AVATAR=true (for debugging or low-resource mode)
-  const SKIP_AVATAR = process.env.SKIP_AVATAR === "true";
+  // Avatar is OFF by default (set SKIP_AVATAR=false to enable TalkingHead)
+  const SKIP_AVATAR = process.env.SKIP_AVATAR !== "false";
   if (!SKIP_AVATAR) {
   avatarPage = await browser.newPage();
   await avatarPage.setViewport({ width: 640, height: 480 });
