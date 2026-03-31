@@ -525,6 +525,20 @@ async function enterWorld() {
   }
   await new Promise(r => setTimeout(r, 5000));
 
+  // Dismiss "Spotlight is on" or similar overlay modals
+  for (let i = 0; i < 5; i++) {
+    const dismissed = await page.evaluate(() => {
+      const btn = [...document.querySelectorAll("button")]
+        .find(b => b.textContent.trim() === "Continue");
+      if (btn) { btn.click(); return true; }
+      return false;
+    });
+    if (dismissed) {
+      console.log(`[${AGENT_NAME}] Dismissed overlay (clicked Continue)`);
+      await new Promise(r => setTimeout(r, 2000));
+    } else break;
+  }
+
   // Enable mic
   try {
     const micPrompt = await page.evaluateHandle(() =>
