@@ -716,6 +716,8 @@ function startWandering() {
     } catch {}
   }
 
+  let stepsFromCenter = 0; // track how far we've drifted
+
   async function wander() {
     if (!page || botStatus !== "in-world") return;
     if (isResponding || isMoving) return;
@@ -725,22 +727,25 @@ function startWandering() {
       // 20% chance to trigger an emote instead of walking
       if (Math.random() < 0.2) {
         await triggerEmote();
-      } else if (pendingReturn.length > 0) {
+      } else if (stepsFromCenter >= 2 || (pendingReturn.length > 0 && Math.random() < 0.7)) {
+        // Always return if 2+ steps out, otherwise 70% chance to return
         const returnStep = pendingReturn.pop();
-        if (!isResponding) {
+        if (returnStep && !isResponding) {
           await page.keyboard.press(returnStep.dir);
+          stepsFromCenter = Math.max(0, stepsFromCenter - 1);
           await new Promise(r => setTimeout(r, 300));
         }
-      } else {
+      } else if (stepsFromCenter < 2) {
+        // Only take a new step if within 1 step of center
         const dir = DIRECTIONS[Math.floor(Math.random() * 4)];
         if (!isResponding) {
           await page.keyboard.press(dir);
+          stepsFromCenter++;
           await new Promise(r => setTimeout(r, 300));
         }
         pendingReturn.push({ dir: OPPOSITE[dir], steps: 1 });
       }
     } catch (e) {
-      // Don't spam logs on session close
       if (!e.message.includes("Session closed")) {
         console.log(`[${AGENT_NAME}] Wander error:`, e.message);
       }
@@ -749,7 +754,7 @@ function startWandering() {
   }
 
   function scheduleNext() {
-    const delay = 4000 + Math.floor(Math.random() * 4000);
+    const delay = 5000 + Math.floor(Math.random() * 5000);
     setTimeout(async () => {
       if (page && botStatus === "in-world") await wander();
       if (botStatus === "in-world") scheduleNext();
