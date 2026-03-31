@@ -180,7 +180,7 @@ async function enterWorld() {
       // Filter common Whisper hallucinations on silence/noise
       // Filter Whisper hallucinations (common outputs on noise/silence)
       const lower = text.trim().toLowerCase();
-      const hallucinations = ["thank you", "thanks for watching", "subscribe", "bye", "you", "the end", "music", "okay", "hmm", "uh"];
+      const hallucinations = ["thank you", "thanks for watching", "subscribe", "bye", "you", "the end", "music", "okay", "hmm", "uh", "they are having", "meditation game", "transcribe", "ignore background", "h3h3"];
       if (hallucinations.includes(lower) || lower.length < 5) {
         console.log(`[${AGENT_NAME}] Filtered: "${text}"`);
         return;
@@ -325,7 +325,7 @@ async function enterWorld() {
           analyser.getByteFrequencyData(freqData);
           const rms = Math.sqrt(freqData.reduce((s, v) => s + v * v, 0) / freqData.length);
 
-          if (rms > 30) { // high threshold — filters ambient music/meditation audio in Topia
+          if (rms > 40) { // high threshold — filters ambient music/meditation audio in Topia
             if (!active) {
               active = true;
               try { recorder.start(); } catch {}
@@ -338,7 +338,7 @@ async function enterWorld() {
                 try { recorder.stop(); } catch {}
                 console.log("[BOT] Recording stopped (3s silence)");
               }
-            }, 4000); // 4s silence = end of utterance — captures full thoughts
+            }, 2500); // 2.5s silence = end of utterance
           }
           setTimeout(tick, 80);
         }
@@ -797,7 +797,7 @@ async function transcribe(audioB64) {
     const body = Buffer.concat([
       Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-1\r\n`),
       Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\nen\r\n`),
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nA person is having a conversation in a meditation game world. They are speaking naturally about meditation, relaxation, or asking questions.\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nTranscribe only clear human speech. Ignore background music and ambient noise.\r\n`),
       Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.webm"\r\nContent-Type: audio/webm\r\n\r\n`),
       binary,
       Buffer.from(`\r\n--${boundary}--\r\n`),
@@ -865,7 +865,7 @@ async function getResponse(userMessage, history) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-20250514",
-        max_tokens: 120,
+        max_tokens: 60,
         system: PERSONALITY,
         messages: history.slice(-30),
       }),
