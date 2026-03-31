@@ -170,8 +170,17 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({ agent: AGENT_NAME, status: botStatus, uptime: process.uptime() }));
 }).listen(PORT, () => console.log(`[${AGENT_NAME}] Health on :${PORT}`));
 
+let currentSessionId = null;
+
 async function cleanup() {
   framePumpRunning = false;
+  // Kill the Browserless session by ID — works even if WebSocket is already gone
+  if (currentSessionId && BROWSERLESS_TOKEN) {
+    try {
+      await fetch(`https://chrome.browserless.io/kill/${currentSessionId}?token=${BROWSERLESS_TOKEN}`, { method: "GET" }).catch(() => {});
+    } catch {}
+    currentSessionId = null;
+  }
   try {
     if (browser) {
       await browser.close().catch(() => {});
@@ -193,8 +202,14 @@ async function enterWorld() {
   botStatus = "connecting";
 
   browser = await puppeteer.connect({
-    browserWSEndpoint: `wss://chrome.browserless.io?token=${BROWSERLESS_TOKEN}`,
+    browserWSEndpoint: `wss://chrome.browserless.io?token=${BROWSERLESS_TOKEN}&timeout=600000`,
   });
+  // Capture session ID so we can force-kill it on cleanup even if WS drops
+  try {
+    const wsUrl = browser.wsEndpoint();
+    const match = wsUrl.match(/\/([a-f0-9-]{36})\?/);
+    if (match) { currentSessionId = match[1]; console.log(`[${AGENT_NAME}] Session: ${currentSessionId}`); }
+  } catch {}
 
   // ── TalkingHead avatar in a separate tab ───────────────────────────
   // Avatar is OFF by default (set SKIP_AVATAR=false to enable TalkingHead)
