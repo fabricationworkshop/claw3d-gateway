@@ -160,7 +160,7 @@ async function enterWorld() {
   botStatus = "connecting";
 
   browser = await puppeteer.connect({
-    browserWSEndpoint: `wss://chrome.browserless.io?token=${BROWSERLESS_TOKEN}`,
+    browserWSEndpoint: `wss://chrome.browserless.io?token=${BROWSERLESS_TOKEN}&timeout=600000`,
   });
 
   page = await browser.newPage();
