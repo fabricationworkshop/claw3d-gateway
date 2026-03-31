@@ -248,6 +248,9 @@ async function enterWorld() {
       ];
     };
 
+    // Mute flag — prevents RTC listener from recording while bot is speaking
+    window._botIsSpeaking = false;
+
     // Play TTS audio through the bot's mic stream
     window._playAudioBase64 = async function (b64) {
       const actx = window._botAudioCtx;
@@ -263,10 +266,18 @@ async function enterWorld() {
         const src = actx.createBufferSource();
         src.buffer = buf;
         src.connect(gain);
+        window._botIsSpeaking = true;
         src.start();
         console.log("[BOT] Playing audio:", buf.duration.toFixed(1), "s");
-        return new Promise(r => (src.onended = r));
+        return new Promise(r => {
+          src.onended = () => {
+            // Keep muted for 1.5s after speaking to let RTC pipeline flush
+            setTimeout(() => { window._botIsSpeaking = false; }, 1500);
+            r();
+          };
+        });
       } catch (e) {
+        window._botIsSpeaking = false;
         console.log("[BOT] Audio decode error:", e.message);
       }
     };
@@ -322,6 +333,20 @@ async function enterWorld() {
         };
 
         function tick() {
+          // Skip listening entirely while bot is speaking (prevents feedback loop)
+          if (window._botIsSpeaking) {
+            // If we were recording, discard it — it's just our own voice
+            if (active) {
+              active = false;
+              clearTimeout(silenceTimer);
+              try { recorder.stop(); } catch {}
+              chunks.splice(0);
+              console.log("[BOT] Discarded recording (own voice)");
+            }
+            setTimeout(tick, 80);
+            return;
+          }
+
           analyser.getByteFrequencyData(freqData);
           const rms = Math.sqrt(freqData.reduce((s, v) => s + v * v, 0) / freqData.length);
 
@@ -336,7 +361,7 @@ async function enterWorld() {
               if (active) {
                 active = false;
                 try { recorder.stop(); } catch {}
-                console.log("[BOT] Recording stopped (3s silence)");
+                console.log("[BOT] Recording stopped (2.5s silence)");
               }
             }, 2500); // 2.5s silence = end of utterance
           }
