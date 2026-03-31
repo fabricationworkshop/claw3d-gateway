@@ -3,7 +3,7 @@ const puppeteer = require("puppeteer-core");
 const http = require("http");
 
 const BROWSERLESS_TOKEN = process.env.BROWSERLESS_TOKEN || "";
-const WORLD_URL = process.env.TOPIA_WORLD_URL || "https://topia.io/relaxwithadam";
+const WORLD_URL = process.env.TOPIA_WORLD_URL || "https://topia.io/rwa-1-demo-k5n7nxm19";
 const WORLD_PASSWORD = process.env.TOPIA_WORLD_PASSWORD || "";
 const AGENT_NAME = process.env.AGENT_NAME || "Adam";
 const DISPLAY_NAME = process.env.DISPLAY_NAME || AGENT_NAME;
