@@ -4,7 +4,7 @@ const http = require("http");
 
 const BROWSERLESS_TOKEN = process.env.BROWSERLESS_TOKEN || "";
 const WORLD_URL = process.env.TOPIA_WORLD_URL || "https://topia.io/relaxwithadam";
-const WORLD_PASSWORD = process.env.TOPIA_WORLD_PASSWORD || "breathe";
+const WORLD_PASSWORD = process.env.TOPIA_WORLD_PASSWORD || "";
 const AGENT_NAME = process.env.AGENT_NAME || "Adam";
 const DISPLAY_NAME = process.env.DISPLAY_NAME || AGENT_NAME;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
@@ -642,8 +642,14 @@ try {
     await page.keyboard.press("a");
     await page.keyboard.up("Control");
     await page.keyboard.type(DISPLAY_NAME, { delay: 20 });
-    await page.evaluate(() => document.getElementById("password").focus());
-    await page.keyboard.type(WORLD_PASSWORD, { delay: 20 });
+    // Only fill password if one is set
+    if (WORLD_PASSWORD) {
+      const hasPasswordField = await page.evaluate(() => !!document.getElementById("password"));
+      if (hasPasswordField) {
+        await page.evaluate(() => document.getElementById("password").focus());
+        await page.keyboard.type(WORLD_PASSWORD, { delay: 20 });
+      }
+    }
     await new Promise(r => setTimeout(r, 500));
   }
 
