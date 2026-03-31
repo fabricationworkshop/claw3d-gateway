@@ -476,6 +476,7 @@ try {
 
   // Navigate
   await page.goto(WORLD_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+  console.log(`[${AGENT_NAME}] Navigated to: ${await page.url()}`);
   botStatus = "loading";
 
   for (let i = 0; i < 20; i++) {
@@ -484,6 +485,16 @@ try {
     await new Promise(r => setTimeout(r, 2000));
   }
   await new Promise(r => setTimeout(r, 3000));
+
+  // Debug: log what's on the page
+  const pageDebug = await page.evaluate(() => ({
+    title: document.title,
+    url: location.href,
+    inputs: [...document.querySelectorAll("input")].map(i => ({ id: i.id, name: i.name, placeholder: i.placeholder, type: i.type })),
+    buttons: [...document.querySelectorAll("button")].filter(b => b.offsetParent).map(b => b.textContent.trim()).filter(Boolean).slice(0, 10),
+    hasDisplayName: !!document.getElementById("displayName"),
+  }));
+  console.log(`[${AGENT_NAME}] Page debug:`, JSON.stringify(pageDebug));
 
   botStatus = "entering";
 
