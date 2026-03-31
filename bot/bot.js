@@ -105,7 +105,7 @@ const conversationHistory = [];
 // Health server + avatar page server
 const fs = require("fs");
 const path = require("path");
-http.createServer((req, res) => {
+http.createServer(async (req, res) => {
   if (req.url?.startsWith("/avatar")) {
     try {
       const html = fs.readFileSync(path.join(__dirname, "avatar.html"), "utf-8");
@@ -114,6 +114,24 @@ http.createServer((req, res) => {
     } catch {
       res.writeHead(404);
       res.end("avatar.html not found");
+    }
+    return;
+  }
+  if (req.url === "/debug" && page) {
+    try {
+      const screenshot = await page.screenshot({ encoding: "base64" });
+      const url = await page.url();
+      const title = await page.title();
+      const info = await page.evaluate(() => ({
+        participants: document.querySelectorAll('[class*="participant"]').length,
+        buttons: [...document.querySelectorAll("button")].map(b => b.textContent.trim()).filter(Boolean).slice(0, 20),
+        bodyText: document.body?.innerText?.slice(0, 500),
+      }));
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<h3>${AGENT_NAME} Debug</h3><p>URL: ${url}</p><p>Title: ${title}</p><pre>${JSON.stringify(info, null, 2)}</pre><img src="data:image/png;base64,${screenshot}" style="max-width:100%">`);
+    } catch (e) {
+      res.writeHead(500, { "Content-Type": "text/plain" });
+      res.end("Debug error: " + e.message);
     }
     return;
   }
