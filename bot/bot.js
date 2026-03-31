@@ -1141,9 +1141,9 @@ setInterval(() => {
   }
 }, 30000);
 
-// Stagger startup so 6 bots don't all hit Browserless at once
-const STAGGER = { Adam: 0, Bowie: 15, Cobalt: 30, Tonya: 45, Rex: 60, Jeanie: 75 };
-const startDelay = (STAGGER[AGENT_NAME] || 0) * 1000;
+// Stagger startup so bots don't all hit Browserless at once
+const STAGGER = { Adam: 0, Bowie: 15, Cobalt: 30, Tonya: 45, Rex: 60, Jeanie: 75, Louie: 0, Sunny: 15, Mocha: 30, Molly: 45 };
+const startDelay = (STAGGER[AGENT_NAME] !== undefined ? STAGGER[AGENT_NAME] : 0) * 1000;
 console.log(`[${AGENT_NAME}] Starting in ${startDelay / 1000}s...`);
 
 setTimeout(() => {
