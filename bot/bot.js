@@ -94,12 +94,15 @@ const SPAWN_COORDS = {
 };
 const SPAWN = SPAWN_COORDS[AGENT_NAME] || { x: 0, y: 0 };
 
-let botStatus = "starting";
+let botStatus = "idle";
 let browser = null;
 let page = null;
 let isReconnecting = false;
 let isResponding = false;
 let isMoving = false;
+let lastSpeechTime = 0;
+let idleCheckInterval = null;
+const IDLE_TIMEOUT = 3 * 60 * 1000; // 3 minutes
 const conversationHistory = [];
 
 // Health server + avatar page server
@@ -117,6 +120,44 @@ http.createServer(async (req, res) => {
     }
     return;
   }
+
+  // ── /start — activate bot (called by Topia interactive object) ──────
+  if (req.url === "/start" || req.url?.startsWith("/start?")) {
+    if (botStatus === "in-world") {
+      // Already running — just reset idle timer
+      lastSpeechTime = Date.now();
+      console.log(`[${AGENT_NAME}] /start hit — already in world, reset idle timer`);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ agent: AGENT_NAME, status: "already-active" }));
+      return;
+    }
+    if (botStatus === "connecting" || botStatus === "loading") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ agent: AGENT_NAME, status: "starting" }));
+      return;
+    }
+    console.log(`[${AGENT_NAME}] /start hit — waking up`);
+    lastSpeechTime = Date.now();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ agent: AGENT_NAME, status: "starting" }));
+    // Launch in background
+    enterWorld().catch(e => {
+      console.error(`[${AGENT_NAME}] Start failed:`, e.message);
+      botStatus = "idle";
+    });
+    return;
+  }
+
+  // ── /stop — manually shut down bot ──────────────────────────────────
+  if (req.url === "/stop") {
+    console.log(`[${AGENT_NAME}] /stop hit — shutting down`);
+    await goIdle("manual stop");
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ agent: AGENT_NAME, status: "idle" }));
+    return;
+  }
+
+  // ── /debug — screenshot + page state ────────────────────────────────
   if (req.url === "/debug" && page) {
     try {
       const screenshot = await page.screenshot({ encoding: "base64" });
@@ -135,8 +176,11 @@ http.createServer(async (req, res) => {
     }
     return;
   }
+
+  // ── Health endpoint ─────────────────────────────────────────────────
+  const idleFor = botStatus === "in-world" ? Math.round((Date.now() - lastSpeechTime) / 1000) : null;
   res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ agent: AGENT_NAME, status: botStatus, uptime: process.uptime() }));
+  res.end(JSON.stringify({ agent: AGENT_NAME, status: botStatus, uptime: process.uptime(), idleSeconds: idleFor }));
 }).listen(PORT, () => console.log(`[${AGENT_NAME}] Health on :${PORT}`));
 
 let currentSessionId = null;
@@ -157,6 +201,28 @@ async function cleanup() {
       page = null;
     }
   } catch {}
+}
+
+// Go idle — disconnect from Browserless, stay ready for /start
+async function goIdle(reason) {
+  console.log(`[${AGENT_NAME}] Going idle: ${reason}`);
+  if (idleCheckInterval) { clearInterval(idleCheckInterval); idleCheckInterval = null; }
+  await cleanup();
+  botStatus = "idle";
+  isReconnecting = false;
+  conversationHistory.length = 0;
+}
+
+// Start idle timer — checks every 30s if 3 min have passed since last speech
+function startIdleTimer() {
+  if (idleCheckInterval) clearInterval(idleCheckInterval);
+  idleCheckInterval = setInterval(async () => {
+    if (botStatus !== "in-world") return;
+    const idle = Date.now() - lastSpeechTime;
+    if (idle > IDLE_TIMEOUT) {
+      await goIdle(`no speech for ${Math.round(idle / 1000)}s`);
+    }
+  }, 30000);
 }
 
 // Graceful shutdown — kill Browserless session on process exit
@@ -211,6 +277,7 @@ async function enterWorld() {
         return;
       }
       console.log(`[${AGENT_NAME}] Heard: "${text}"`);
+      lastSpeechTime = Date.now(); // reset idle timer
       const reply = await getResponse(text, conversationHistory);
       console.log(`[${AGENT_NAME}] Replying: "${reply}"`);
       await speak(reply);
@@ -644,7 +711,9 @@ async function enterWorld() {
   console.log(`[${AGENT_NAME}] Mic state:`, JSON.stringify(finalMicState));
 
   botStatus = "in-world";
-  console.log(`[${AGENT_NAME}] In the world and listening!`);
+  lastSpeechTime = Date.now();
+  startIdleTimer();
+  console.log(`[${AGENT_NAME}] In the world and listening! (idle timeout: ${IDLE_TIMEOUT / 1000}s)`);
 
   // Teleport to spawn position
   await teleportToSpawn();
@@ -656,9 +725,15 @@ async function enterWorld() {
 
   browser.on("disconnected", () => {
     console.log(`[${AGENT_NAME}] Browser disconnected`);
-    botStatus = "disconnected";
     browser = null;
     page = null;
+    if (idleCheckInterval) { clearInterval(idleCheckInterval); idleCheckInterval = null; }
+    // Don't reconnect if we went idle intentionally — wait for /start
+    if (botStatus === "idle") {
+      console.log(`[${AGENT_NAME}] Idle disconnect — waiting for /start`);
+      return;
+    }
+    botStatus = "disconnected";
     if (!isReconnecting) scheduleReconnect();
   });
 }
@@ -941,15 +1016,5 @@ setInterval(() => {
   }
 }, 30000);
 
-// Stagger startup so 6 bots don't all hit Browserless at once
-const STAGGER = { Adam: 0, Bowie: 15, Cobalt: 30, Tonya: 45, Rex: 60, Jeanie: 75 };
-const startDelay = (STAGGER[AGENT_NAME] || 0) * 1000;
-console.log(`[${AGENT_NAME}] Starting in ${startDelay / 1000}s...`);
-
-setTimeout(() => {
-  enterWorld().catch(e => {
-    console.error(`[${AGENT_NAME}] Fatal:`, e.message);
-    botStatus = "crashed: " + e.message;
-    scheduleReconnect();
-  });
-}, startDelay);
+// Bot starts idle — no Browserless session until /start is hit
+console.log(`[${AGENT_NAME}] Ready — hit /start to activate (idle timeout: ${IDLE_TIMEOUT / 1000}s)`);
