@@ -139,7 +139,17 @@ http.createServer(async (req, res) => {
   res.end(JSON.stringify({ agent: AGENT_NAME, status: botStatus, uptime: process.uptime() }));
 }).listen(PORT, () => console.log(`[${AGENT_NAME}] Health on :${PORT}`));
 
+let currentSessionId = null;
+
 async function cleanup() {
+  // Kill Browserless session by ID to prevent orphan sessions draining billing
+  if (currentSessionId && BROWSERLESS_TOKEN) {
+    try {
+      await fetch(`https://chrome.browserless.io/kill/${currentSessionId}?token=${BROWSERLESS_TOKEN}`, { method: "GET" }).catch(() => {});
+      console.log(`[${AGENT_NAME}] Killed Browserless session ${currentSessionId}`);
+    } catch {}
+    currentSessionId = null;
+  }
   try {
     if (browser) {
       await browser.close().catch(() => {});
@@ -149,9 +159,17 @@ async function cleanup() {
   } catch {}
 }
 
-// NOTE: No longer killing ALL sessions — that caused a cascade where
-// each bot killed the others' sessions. Each bot only cleans up its OWN
-// browser connection via cleanup() above.
+// Graceful shutdown — kill Browserless session on process exit
+process.on("SIGTERM", async () => {
+  console.log(`[${AGENT_NAME}] SIGTERM received, cleaning up...`);
+  await cleanup();
+  process.exit(0);
+});
+process.on("SIGINT", async () => {
+  console.log(`[${AGENT_NAME}] SIGINT received, cleaning up...`);
+  await cleanup();
+  process.exit(0);
+});
 
 async function enterWorld() {
   await cleanup();
@@ -162,6 +180,13 @@ async function enterWorld() {
   browser = await puppeteer.connect({
     browserWSEndpoint: `wss://chrome.browserless.io?token=${BROWSERLESS_TOKEN}&timeout=600000`,
   });
+
+  // Capture session ID for cleanup
+  try {
+    const wsUrl = browser.wsEndpoint();
+    const match = wsUrl.match(/\/([a-f0-9-]{36})\?/);
+    if (match) { currentSessionId = match[1]; console.log(`[${AGENT_NAME}] Session: ${currentSessionId}`); }
+  } catch {}
 
   page = await browser.newPage();
   const ctx = browser.defaultBrowserContext();
