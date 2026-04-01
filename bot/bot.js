@@ -169,6 +169,7 @@ let isResponding = false;
 let isMoving = false;
 let lastSpeechTime = 0;
 let idleCheckInterval = null;
+let botVisitorId = null;
 const IDLE_TIMEOUT = 3 * 60 * 1000; // 3 minutes
 const conversationHistory = [];
 
@@ -881,6 +882,29 @@ async function enterWorld() {
   startIdleTimer();
   console.log(`[${AGENT_NAME}] In the world and listening! (idle timeout: ${IDLE_TIMEOUT / 1000}s)`);
 
+  // Find bot's visitor ID via SDK so we can teleport
+  if (topiaSDK) {
+    try {
+      const World = new WorldFactory(topiaSDK);
+      const world = await World.create(WORLD_SLUG, {
+        credentials: { interactivePublicKey: TOPIA_PUBLIC_KEY, interactiveNonce: Date.now().toString(), visitorId: 0 },
+      });
+      await world.fetchDetails();
+      const visitors = world.visitors || {};
+      // Find our bot by display name
+      for (const [vid, v] of Object.entries(visitors)) {
+        if (v.displayName === DISPLAY_NAME || v.username === DISPLAY_NAME) {
+          botVisitorId = parseInt(vid) || vid;
+          console.log(`[${AGENT_NAME}] Bot visitor ID: ${botVisitorId}`);
+          break;
+        }
+      }
+      if (!botVisitorId) console.log(`[${AGENT_NAME}] Could not find bot visitor ID. Visitors:`, JSON.stringify(Object.entries(visitors).map(([id, v]) => ({ id, name: v.displayName }))));
+    } catch (e) {
+      console.log(`[${AGENT_NAME}] Visitor ID lookup error:`, e.message);
+    }
+  }
+
   // Teleport to spawn position (near the ticket item)
   await teleportToSpawn();
 
@@ -907,13 +931,27 @@ async function enterWorld() {
 
 // Teleport to exact spawn coordinates
 async function teleportToSpawn() {
-  if (!page) return;
   const { x, y } = SPAWN;
-  console.log(`[${AGENT_NAME}] Teleporting to (${x}, ${y})...`);
+  console.log(`[${AGENT_NAME}] Teleporting to (${x}, ${y}) via SDK...`);
 
-  // Try multiple strategies to set position in Topia
+  // Use Topia SDK moveVisitor to teleport the bot
+  if (topiaSDK && botVisitorId) {
+    try {
+      const Visitor = new VisitorFactory(topiaSDK);
+      const visitor = await Visitor.get(botVisitorId, WORLD_SLUG, {
+        credentials: { interactivePublicKey: TOPIA_PUBLIC_KEY, interactiveNonce: Date.now().toString(), visitorId: botVisitorId },
+      });
+      await visitor.moveVisitor({ x, y, shouldTeleportVisitor: true });
+      console.log(`[${AGENT_NAME}] SDK teleported to (${x}, ${y})`);
+      return;
+    } catch (e) {
+      console.log(`[${AGENT_NAME}] SDK teleport error:`, e.message);
+    }
+  }
+
+  // Fallback: try browser-based teleport
+  if (!page) return;
   const teleported = await page.evaluate((targetX, targetY) => {
-    // Strategy 1: look for Topia's internal player/world object
     const globals = ["__TOPIA__", "topia", "game", "world", "app"];
     for (const g of globals) {
       const obj = window[g];
@@ -923,8 +961,6 @@ async function teleportToSpawn() {
         return "global." + g;
       }
     }
-
-    // Strategy 2: search React fiber tree for player position setter
     try {
       const canvas = document.querySelector("canvas");
       if (canvas) {
