@@ -722,13 +722,12 @@ async function enterWorld() {
   startIdleTimer();
   console.log(`[${AGENT_NAME}] In the world and listening! (idle timeout: ${IDLE_TIMEOUT / 1000}s)`);
 
-  // Teleport to spawn position
+  // Teleport to spawn position (near the ticket item)
   await teleportToSpawn();
 
   await speak(GREETING);
 
-  // Start gentle wandering (very slight — preserves spatial audio)
-  startWandering();
+  // Stay put — no wandering. Adam stays near the ticket until someone talks to him.
 
   browser.on("disconnected", () => {
     console.log(`[${AGENT_NAME}] Browser disconnected`);
@@ -800,8 +799,8 @@ async function teleportToSpawn() {
     const dx = Math.round(x / stepsPerUnit);
     const dy = Math.round(y / stepsPerUnit);
 
-    // Cap at 200 steps max to avoid taking forever
-    const maxSteps = 200;
+    // Cap at 5 steps max — don't walk far, just nudge toward target
+    const maxSteps = 5;
     const hSteps = Math.min(Math.abs(dx), maxSteps);
     const vSteps = Math.min(Math.abs(dy), maxSteps);
 
