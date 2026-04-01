@@ -471,7 +471,10 @@ async function enterWorld() {
   });
 
   // Navigate
-  await page.goto(WORLD_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+  // Navigate with spawn coordinates in URL
+  const spawnUrl = `${WORLD_URL}?x=${SPAWN.x}&y=${SPAWN.y}`;
+  console.log(`[${AGENT_NAME}] Navigating to: ${spawnUrl}`);
+  await page.goto(spawnUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
   botStatus = "loading";
 
   for (let i = 0; i < 20; i++) {
@@ -792,31 +795,7 @@ async function teleportToSpawn() {
   if (teleported) {
     console.log(`[${AGENT_NAME}] Teleported via ${teleported}`);
   } else {
-    // Fallback: use arrow keys to walk toward the target from spawn
-    // Topia arrow key = ~48 units per press, spawn point is roughly (0, 0)
-    console.log(`[${AGENT_NAME}] JS teleport failed, walking via arrow keys...`);
-    const stepsPerUnit = 48; // approximate pixels per arrow key press
-    const dx = Math.round(x / stepsPerUnit);
-    const dy = Math.round(y / stepsPerUnit);
-
-    // Cap at 5 steps max — don't walk far, just nudge toward target
-    const maxSteps = 5;
-    const hSteps = Math.min(Math.abs(dx), maxSteps);
-    const vSteps = Math.min(Math.abs(dy), maxSteps);
-
-    const hKey = dx > 0 ? "ArrowRight" : "ArrowLeft";
-    for (let i = 0; i < hSteps; i++) {
-      await page.keyboard.press(hKey);
-      if (i % 10 === 0) await new Promise(r => setTimeout(r, 50));
-    }
-
-    const vKey = dy > 0 ? "ArrowDown" : "ArrowUp";
-    for (let i = 0; i < vSteps; i++) {
-      await page.keyboard.press(vKey);
-      if (i % 10 === 0) await new Promise(r => setTimeout(r, 50));
-    }
-
-    console.log(`[${AGENT_NAME}] Walked ${hSteps}h + ${vSteps}v steps`);
+    console.log(`[${AGENT_NAME}] JS teleport unavailable — relying on URL spawn coords`);
   }
 }
 
