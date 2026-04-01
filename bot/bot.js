@@ -1,9 +1,11 @@
-const BOT_VERSION = "v8"; // bump this to verify deploys
+const BOT_VERSION = "v9"; // bump this to verify deploys
 const puppeteer = require("puppeteer-core");
 const http = require("http");
+const { Topia, DroppedAssetFactory, WorldFactory, VisitorFactory } = require("@rtsdk/topia");
 
 const BROWSERLESS_TOKEN = process.env.BROWSERLESS_TOKEN || "";
 const WORLD_URL = process.env.TOPIA_WORLD_URL || "https://topia.io/relaxwithadam";
+const WORLD_SLUG = (process.env.TOPIA_WORLD_URL || "https://topia.io/relaxwithadam").split("/").pop();
 const WORLD_PASSWORD = process.env.TOPIA_WORLD_PASSWORD || "breathe";
 const AGENT_NAME = process.env.AGENT_NAME || "Adam";
 const DISPLAY_NAME = process.env.DISPLAY_NAME || AGENT_NAME;
@@ -12,6 +14,70 @@ const ELEVENLABS_KEY = process.env.ELEVENLABS_API_KEY || "";
 const ELEVENLABS_VOICE = process.env.ELEVENLABS_VOICE_ID || "";
 const OPENAI_KEY = process.env.OPENAI_API_KEY || "";
 const PORT = process.env.PORT || 7860;
+
+// Topia SDK credentials
+const TOPIA_API_KEY = process.env.TOPIA_API_KEY || "";
+const TOPIA_PUBLIC_KEY = process.env.TOPIA_PUBLIC_KEY || "";
+const TOPIA_PRIVATE_KEY = process.env.TOPIA_PRIVATE_KEY || "";
+
+// Initialize Topia SDK
+let topiaSDK = null;
+let topiaWorld = null;
+if (TOPIA_API_KEY && TOPIA_PUBLIC_KEY && TOPIA_PRIVATE_KEY) {
+  topiaSDK = new Topia({
+    apiDomain: "api.topia.io",
+    apiProtocol: "https",
+    apiKey: TOPIA_API_KEY,
+    interactiveKey: TOPIA_PUBLIC_KEY,
+    interactiveSecret: TOPIA_PRIVATE_KEY,
+  });
+  console.log(`[${AGENT_NAME}] Topia SDK initialized`);
+}
+
+// Play a sound on an asset using the SDK
+async function playAssetSound(assetId, soundUrl) {
+  if (!topiaSDK || !assetId) return;
+  try {
+    const DroppedAsset = new DroppedAssetFactory(topiaSDK);
+    const asset = await DroppedAsset.get(assetId, WORLD_SLUG, {
+      credentials: { interactivePublicKey: TOPIA_PUBLIC_KEY, interactiveNonce: Date.now().toString(), visitorId: 0 },
+    });
+    // Set audio on the asset
+    await asset.updateMediaType({
+      mediaLink: soundUrl,
+      mediaType: "link",
+      isVideo: false,
+      audioSliderVolume: 50,
+      audioRadius: 5,
+      syncUserMedia: true,
+    });
+    console.log(`[${AGENT_NAME}] Playing sound on asset ${assetId}`);
+    // Stop after 3 seconds
+    setTimeout(async () => {
+      try {
+        await asset.updateMediaType({ mediaType: "none", mediaLink: "", isVideo: false, audioSliderVolume: 0, audioRadius: 0, syncUserMedia: false });
+        console.log(`[${AGENT_NAME}] Stopped sound on asset ${assetId}`);
+      } catch (e) { console.log(`[${AGENT_NAME}] Stop sound error:`, e.message); }
+    }, 3000);
+  } catch (e) {
+    console.log(`[${AGENT_NAME}] SDK sound error:`, e.message);
+  }
+}
+
+// Fire a toast notification to all visitors
+async function fireWorldToast(title, text) {
+  if (!topiaSDK) return;
+  try {
+    const World = new WorldFactory(topiaSDK);
+    const world = await World.create(WORLD_SLUG, {
+      credentials: { interactivePublicKey: TOPIA_PUBLIC_KEY, interactiveNonce: Date.now().toString(), visitorId: 0 },
+    });
+    await world.fireToast({ title, text });
+    console.log(`[${AGENT_NAME}] Toast: ${title}`);
+  } catch (e) {
+    console.log(`[${AGENT_NAME}] Toast error:`, e.message);
+  }
+}
 
 // ── Agent personalities ──────────────────────────────────────────────────────
 const SHARED_RULES = `
@@ -184,12 +250,34 @@ http.createServer(async (req, res) => {
     return;
   }
 
-  // ── /start — activate bot (called by Topia interactive object) ──────
+  // ── /start — activate bot (called by Topia webhook on asset click) ──
   if (req.url === "/start" || req.url?.startsWith("/start?")) {
+    // Parse webhook body if POST
+    let webhookData = null;
+    if (req.method === "POST") {
+      try {
+        const body = await new Promise((resolve) => {
+          let data = "";
+          req.on("data", c => data += c);
+          req.on("end", () => resolve(data));
+        });
+        webhookData = JSON.parse(body);
+        console.log(`[${AGENT_NAME}] Webhook data:`, JSON.stringify(webhookData).slice(0, 500));
+      } catch {}
+    }
+
+    // Play sound on the clicked asset via Topia SDK (instant for the visitor)
+    if (webhookData?.assetId) {
+      playAssetSound(webhookData.assetId, "https://cdn.freesound.org/previews/536/536420_4921277-lq.mp3").catch(() => {});
+      fireWorldToast("Summoning Adam...", "He'll be with you in a moment!").catch(() => {});
+    }
+
     if (botStatus === "in-world") {
-      // Already running — just reset idle timer
       lastSpeechTime = Date.now();
       console.log(`[${AGENT_NAME}] /start hit — already in world, reset idle timer`);
+      if (webhookData?.assetId) {
+        fireWorldToast("Adam is here!", "Walk over and say hi!").catch(() => {});
+      }
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ agent: AGENT_NAME, status: "already-active" }));
       return;
@@ -203,7 +291,6 @@ http.createServer(async (req, res) => {
     lastSpeechTime = Date.now();
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ agent: AGENT_NAME, status: "starting" }));
-    // Launch in background
     enterWorld().catch(e => {
       console.error(`[${AGENT_NAME}] Start failed:`, e.message);
       botStatus = "idle";

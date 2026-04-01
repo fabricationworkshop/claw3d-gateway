@@ -4,6 +4,7 @@
   "description": "Topia agent bot - joins world as a character with AI voice",
   "main": "bot.js",
   "dependencies": {
+    "@rtsdk/topia": "^0.20.1",
     "puppeteer-core": "^24.0.0"
   }
 }
