@@ -207,6 +207,9 @@ async function cleanup() {
 async function goIdle(reason) {
   console.log(`[${AGENT_NAME}] Going idle: ${reason}`);
   if (idleCheckInterval) { clearInterval(idleCheckInterval); idleCheckInterval = null; }
+  // Play stop sound before disconnecting
+  await playSfx("stop");
+  await new Promise(r => setTimeout(r, 500));
   await cleanup();
   botStatus = "idle";
   isReconnecting = false;
@@ -728,6 +731,8 @@ async function enterWorld() {
   // Teleport to spawn position (near the ticket item)
   await teleportToSpawn();
 
+  await playSfx("start");
+  await new Promise(r => setTimeout(r, 500));
   await speak(GREETING);
 
   // Stay put — no wandering. Adam stays near the ticket until someone talks to him.
@@ -928,6 +933,52 @@ async function transcribe(audioB64) {
   } catch (e) {
     console.error("Transcribe error:", e.message);
     return null;
+  }
+}
+
+// Play a sound effect through the bot's mic in Topia
+async function playSfx(type) {
+  if (!page) return;
+  try {
+    await page.evaluate((sfxType) => {
+      const actx = window._botAudioCtx;
+      const gain = window._botGain;
+      if (!actx || !gain) return;
+
+      if (sfxType === "start") {
+        // Ascending chime — two quick notes
+        const osc1 = actx.createOscillator();
+        const osc2 = actx.createOscillator();
+        const g = actx.createGain();
+        g.gain.value = 0.3;
+        g.connect(gain);
+        osc1.type = "sine";
+        osc1.frequency.value = 523; // C5
+        osc1.connect(g);
+        osc1.start(actx.currentTime);
+        osc1.stop(actx.currentTime + 0.15);
+        osc2.type = "sine";
+        osc2.frequency.value = 659; // E5
+        osc2.connect(g);
+        osc2.start(actx.currentTime + 0.15);
+        osc2.stop(actx.currentTime + 0.35);
+      } else if (sfxType === "stop") {
+        // Descending tone
+        const osc = actx.createOscillator();
+        const g = actx.createGain();
+        g.gain.value = 0.3;
+        g.connect(gain);
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(523, actx.currentTime);
+        osc.frequency.linearRampToValueAtTime(330, actx.currentTime + 0.4);
+        osc.connect(g);
+        osc.start(actx.currentTime);
+        osc.stop(actx.currentTime + 0.4);
+      }
+    }, type);
+    console.log(`[${AGENT_NAME}] SFX: ${type}`);
+  } catch (e) {
+    console.log(`[${AGENT_NAME}] SFX error:`, e.message);
   }
 }
 
