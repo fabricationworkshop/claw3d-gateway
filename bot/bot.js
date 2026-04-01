@@ -121,6 +121,69 @@ http.createServer(async (req, res) => {
     return;
   }
 
+  // ── /summon — HTML page that plays sound + triggers /start ───────────
+  if (req.url === "/summon" || req.url?.startsWith("/summon?")) {
+    const alreadyActive = botStatus === "in-world";
+    if (!alreadyActive && botStatus !== "connecting" && botStatus !== "loading") {
+      lastSpeechTime = Date.now();
+      enterWorld().catch(e => { console.error(`[${AGENT_NAME}] Start failed:`, e.message); botStatus = "idle"; });
+    } else if (alreadyActive) {
+      lastSpeechTime = Date.now();
+    }
+    console.log(`[${AGENT_NAME}] /summon hit — status: ${botStatus}`);
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(`<!DOCTYPE html><html><head><style>
+      body{margin:0;display:flex;align-items:center;justify-content:center;height:100vh;
+      background:#0a0a1a;color:#fff;font-family:sans-serif;text-align:center}
+      .msg{opacity:0;animation:fade 3s ease}
+      @keyframes fade{0%{opacity:0}10%{opacity:1}80%{opacity:1}100%{opacity:0}}
+    </style></head><body>
+    <div class="msg"><h2>${alreadyActive ? "Adam is here!" : "Summoning Adam..."}</h2>
+    <p>${alreadyActive ? "Walk over and say hi!" : "He'll be there in a moment"}</p></div>
+    <script>
+      const ac=new AudioContext();
+      ${alreadyActive ? `
+      // Already active — play a quick ping
+      const o=ac.createOscillator(),g=ac.createGain();
+      o.type="sine";o.frequency.value=880;g.gain.value=0.2;
+      o.connect(g);g.connect(ac.destination);
+      o.start();o.stop(ac.currentTime+0.1);
+      ` : `
+      // Summoning — ascending chime
+      const o1=ac.createOscillator(),o2=ac.createOscillator(),g=ac.createGain();
+      g.gain.value=0.25;g.connect(ac.destination);
+      o1.type="sine";o1.frequency.value=523;o1.connect(g);
+      o1.start();o1.stop(ac.currentTime+0.15);
+      o2.type="sine";o2.frequency.value=659;o2.connect(g);
+      o2.start(ac.currentTime+0.15);o2.stop(ac.currentTime+0.35);
+      `}
+    </script></body></html>`);
+    return;
+  }
+
+  // ── /dismiss — HTML page that plays stop sound + triggers /stop ─────
+  if (req.url === "/dismiss") {
+    console.log(`[${AGENT_NAME}] /dismiss hit`);
+    goIdle("dismiss clicked").catch(() => {});
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(`<!DOCTYPE html><html><head><style>
+      body{margin:0;display:flex;align-items:center;justify-content:center;height:100vh;
+      background:#0a0a1a;color:#fff;font-family:sans-serif;text-align:center}
+      .msg{opacity:0;animation:fade 3s ease}
+      @keyframes fade{0%{opacity:0}10%{opacity:1}80%{opacity:1}100%{opacity:0}}
+    </style></head><body>
+    <div class="msg"><h2>Adam is heading out</h2><p>Click the ticket to summon him again</p></div>
+    <script>
+      const ac=new AudioContext();
+      const o=ac.createOscillator(),g=ac.createGain();
+      g.gain.value=0.25;g.connect(ac.destination);
+      o.type="sine";o.frequency.setValueAtTime(659,ac.currentTime);
+      o.frequency.linearRampToValueAtTime(330,ac.currentTime+0.4);
+      o.connect(g);o.start();o.stop(ac.currentTime+0.4);
+    </script></body></html>`);
+    return;
+  }
+
   // ── /start — activate bot (called by Topia interactive object) ──────
   if (req.url === "/start" || req.url?.startsWith("/start?")) {
     if (botStatus === "in-world") {
