@@ -35,43 +35,44 @@ if (TOPIA_API_KEY && TOPIA_PUBLIC_KEY && TOPIA_PRIVATE_KEY) {
 }
 
 // Play a sound on an asset using the SDK
-async function playAssetSound(assetId, soundUrl) {
+async function playAssetSound(assetId, soundUrl, visitorId) {
   if (!topiaSDK || !assetId) return;
   try {
+    const creds = visitorId
+      ? { interactivePublicKey: TOPIA_PUBLIC_KEY, interactiveNonce: Date.now().toString(), visitorId }
+      : { assetId };
     const DroppedAsset = new DroppedAssetFactory(topiaSDK);
-    const asset = await DroppedAsset.get(assetId, WORLD_SLUG, {
-      credentials: { interactivePublicKey: TOPIA_PUBLIC_KEY, interactiveNonce: Date.now().toString(), visitorId: 0 },
-    });
-    // Set audio on the asset
+    const asset = await DroppedAsset.get(assetId, WORLD_SLUG, { credentials: creds });
     await asset.updateMediaType({
       mediaLink: soundUrl,
       mediaType: "link",
       isVideo: false,
-      audioSliderVolume: 50,
-      audioRadius: 5,
+      audioSliderVolume: 80,
+      audioRadius: 10,
       syncUserMedia: true,
     });
     console.log(`[${AGENT_NAME}] Playing sound on asset ${assetId}`);
-    // Stop after 3 seconds
+    // Stop after 4 seconds
     setTimeout(async () => {
       try {
         await asset.updateMediaType({ mediaType: "none", mediaLink: "", isVideo: false, audioSliderVolume: 0, audioRadius: 0, syncUserMedia: false });
         console.log(`[${AGENT_NAME}] Stopped sound on asset ${assetId}`);
       } catch (e) { console.log(`[${AGENT_NAME}] Stop sound error:`, e.message); }
-    }, 3000);
+    }, 4000);
   } catch (e) {
-    console.log(`[${AGENT_NAME}] SDK sound error:`, e.message);
+    console.log(`[${AGENT_NAME}] SDK sound error:`, e.message, e.response?.data ? JSON.stringify(e.response.data).slice(0, 300) : "");
   }
 }
 
 // Fire a toast notification to all visitors
-async function fireWorldToast(title, text) {
+async function fireWorldToast(title, text, visitorId) {
   if (!topiaSDK) return;
   try {
+    const creds = visitorId
+      ? { interactivePublicKey: TOPIA_PUBLIC_KEY, interactiveNonce: Date.now().toString(), visitorId }
+      : {};
     const World = new WorldFactory(topiaSDK);
-    const world = await World.create(WORLD_SLUG, {
-      credentials: { interactivePublicKey: TOPIA_PUBLIC_KEY, interactiveNonce: Date.now().toString(), visitorId: 0 },
-    });
+    const world = await World.create(WORLD_SLUG, { credentials: creds });
     await world.fireToast({ title, text });
     console.log(`[${AGENT_NAME}] Toast: ${title}`);
   } catch (e) {
@@ -267,16 +268,18 @@ http.createServer(async (req, res) => {
     }
 
     // Play sound on the clicked asset via Topia SDK (instant for the visitor)
+    const vid = webhookData?.visitorId;
     if (webhookData?.assetId) {
-      playAssetSound(webhookData.assetId, "https://cdn.freesound.org/previews/536/536420_4921277-lq.mp3").catch(() => {});
-      fireWorldToast("Summoning Adam...", "He'll be with you in a moment!").catch(() => {});
+      // Use a short YouTube clip as the sound — Topia natively supports YouTube audio
+      playAssetSound(webhookData.assetId, "https://www.youtube.com/watch?v=YKOFxGCdMfg", vid).catch(() => {});
+      fireWorldToast("Summoning Adam...", "He'll be with you in a moment!", vid).catch(() => {});
     }
 
     if (botStatus === "in-world") {
       lastSpeechTime = Date.now();
       console.log(`[${AGENT_NAME}] /start hit — already in world, reset idle timer`);
       if (webhookData?.assetId) {
-        fireWorldToast("Adam is here!", "Walk over and say hi!").catch(() => {});
+        fireWorldToast("Adam is here!", "Walk over and say hi!", vid).catch(() => {});
       }
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ agent: AGENT_NAME, status: "already-active" }));
