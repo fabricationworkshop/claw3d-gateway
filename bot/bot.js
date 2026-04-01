@@ -642,17 +642,24 @@ async function enterWorld() {
   }
   await new Promise(r => setTimeout(r, 5000));
 
-  // Dismiss "Spotlight is on" or similar overlay modals
+  // Dismiss all overlay modals (Spotlight, Low Bandwidth, etc.)
   for (let i = 0; i < 5; i++) {
     const dismissed = await page.evaluate(() => {
-      const btn = [...document.querySelectorAll("button")]
-        .find(b => b.textContent.trim() === "Continue");
-      if (btn) { btn.click(); return true; }
-      return false;
+      const dismissTexts = ["Continue", "Don't show again", "Got it", "Close", "Dismiss", "OK"];
+      for (const text of dismissTexts) {
+        const btn = [...document.querySelectorAll("button")]
+          .find(b => b.textContent.trim() === text);
+        if (btn) { btn.click(); return text; }
+      }
+      // Also click any x/close icon buttons
+      const xBtn = [...document.querySelectorAll("button")]
+        .find(b => b.textContent.trim() === "x icon" || b.getAttribute("aria-label")?.toLowerCase() === "close");
+      if (xBtn) { xBtn.click(); return "x-close"; }
+      return null;
     });
     if (dismissed) {
-      console.log(`[${AGENT_NAME}] Dismissed overlay (clicked Continue)`);
-      await new Promise(r => setTimeout(r, 2000));
+      console.log(`[${AGENT_NAME}] Dismissed overlay: ${dismissed}`);
+      await new Promise(r => setTimeout(r, 1500));
     } else break;
   }
 
