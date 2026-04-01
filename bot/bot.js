@@ -85,7 +85,7 @@ const AVATAR_INDEX = {
 
 // ── Exact spawn coordinates from Topia world builder ─────────────────────────
 const SPAWN_COORDS = {
-  Adam:   { x: -949,  y: 9 },
+  Adam:   { x: 83,  y: 11 },
   Bowie:  { x: -1132, y: -3122 },
   Cobalt: { x: -6526, y: -3751 },
   Tonya:  { x: 3433,  y: 6000 },
